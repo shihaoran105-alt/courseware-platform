@@ -58,9 +58,15 @@
 <div id="modalRoot"></div>
 <div class="toasts" id="toasts"></div>
 
+<script type="module">
+  import * as pdfjsLib from './vendor/pdf.min.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
+  window.pdfjsLib = pdfjsLib;
+</script>
 <script src="./vendor/jszip.min.js"></script>
 <script src="./static-boot.js"></script>
 <script src="./icons.js"></script>
+<script src="slides.js"></script>
 <script src="app.js"></script>
 <script src="quiz-lab.js"></script>
 </body>

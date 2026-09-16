@@ -185,9 +185,30 @@ function parseExcerpt(text) {
   return out;
 }
 
+/** 从 pageRefs 找出「哪份课件的哪一页」，用于渲染原生页面截图 */
+function explainSlideRefs(r) {
+  const files = state.project?.files || [];
+  const cw =
+    files.find((f) => f.role === 'courseware' && f.previewPdf) ||
+    files.find((f) => f.previewPdf);
+  const pages = arr(r.pageRefs)
+    .map((p) => String(p).match(/\d+/))
+    .filter(Boolean)
+    .map((m) => Number(m[0]))
+    .filter((n) => n > 0);
+  if (!cw || !pages.length) return [];
+  return pages.map((page, i) => ({
+    ref: arr(r.pageRefs)[i] || `第 ${page} 页`,
+    page,
+    pdf: cw.previewPdf,
+    fileName: cw.originalName,
+  }));
+}
+
 function explainPanel(q, entry) {
   const r = entry.result || {};
   const blocks = parseExcerpt(entry.excerpt);
+  const slideRefs = explainSlideRefs(r);
 
   return `
   <div class="card explain-card" id="explainAnchor">
@@ -206,18 +227,28 @@ function explainPanel(q, entry) {
 
     <div class="explain-split">
       <div class="explain-source">
-        <div class="col-label">课件原文</div>
+        <div class="col-label">课件原文 · 原页面截图</div>
         ${
-          blocks.length
-            ? blocks
+          slideRefs.length
+            ? slideRefs
                 .map(
-                  (b) => `<div class="src-block">
-              <div class="src-label">${esc(b.label)}${b.file ? `<span>${esc(b.file)}</span>` : ''}</div>
-              <div class="src-text">${esc(b.text)}</div>
+                  (x, i) => `<div class="src-block">
+              <div class="src-label">${esc(x.ref)}<span>${esc(x.fileName)}</span></div>
+              <div class="slide-stage" data-eslide="${i}" data-pdf="${esc(x.pdf)}" data-page="${x.page}"></div>
             </div>`,
                 )
                 .join('')
-            : '<p class="muted">没有定位到相关原文</p>'
+            : blocks.length
+              ? `<div class="note-box" style="margin:0 0 12px">${icon('alert', 12)}这份文件暂时生成不了页面截图，下面是提取出的文字。</div>` +
+                blocks
+                  .map(
+                    (b) => `<div class="src-block">
+              <div class="src-label">${esc(b.label)}${b.file ? `<span>${esc(b.file)}</span>` : ''}</div>
+              <div class="src-text">${esc(b.text)}</div>
+            </div>`,
+                  )
+                  .join('')
+              : '<p class="muted">没有定位到相关原文</p>'
         }
       </div>
 
@@ -458,6 +489,9 @@ function wireQuiz() {
     if (q) saveDraft(q);
   });
 
+  // 已经生成过精讲的题，直接把截图挂上
+  wireExplainSlides($('#explainAnchor'));
+
   if (qlState.focusAnswer) {
     qlState.focusAnswer = false;
     ($('#quizAnswer') || $('#quizNotes'))?.focus();
@@ -522,6 +556,7 @@ async function loadExplain(force) {
     state.project.explain = state.project.explain || {};
     state.project.explain[q.id] = { result: res.result, excerpt: res.excerpt, at: new Date().toISOString() };
     paintQuiz();
+    wireExplainSlides($('#explainAnchor'));
     toast(res.cached ? '已载入之前的讲解' : '课件精讲已生成', 'ok');
     $('#explainAnchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
@@ -533,6 +568,14 @@ async function loadExplain(force) {
   } finally {
     qlState.busy = false;
   }
+}
+
+/** 把讲解面板里的截图位真正渲染出来（外部容器插入后调用） */
+function wireExplainSlides(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-eslide]').forEach((el) => {
+    mountSlide(el, el.dataset.pdf, Number(el.dataset.page) || 1, { width: 900 });
+  });
 }
 
 async function resetAttempts(questionId) {
@@ -579,7 +622,16 @@ function labInner() {
   const steps = arr(lab.steps);
   const pct = steps.length ? Math.round((doneSteps.length / steps.length) * 100) : 0;
 
+  const shape = state.project?.shape || {};
+  const warn = shape.hasLab
+    ? ''
+    : `<div class="note-box" style="margin-bottom:16px">
+        ${icon('alert', 12)}<b>这个项目里没有检测到实验指导文件</b>（文件名通常含 lab）。下面这个 Lab 是基于课件内容<b>补充设计</b>的，
+        可能和你的实际实验器材与步骤不适配。点右上角「重新生成本节」可以重做。
+      </div>`;
+
   return `
+  ${warn}
   ${
     list.length > 1
       ? `<div class="card"><h3><span class="num">${icon('flask', 12)}</span>共 ${list.length} 个实验</h3>

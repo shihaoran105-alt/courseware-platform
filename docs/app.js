@@ -36,7 +36,7 @@ const state = {
   view: 'empty', // empty | ready | analyzing | done
   stages: [],
   progress: 0,
-  presenter: { index: 0, timer: null, seconds: 0 },
+  presenter: { index: 0, slideOffset: 0, timer: null, seconds: 0 },
   chatStreaming: false,
   apiKey: lsGet(LS.key),
   apiBase: lsGet(LS.base),
@@ -423,6 +423,7 @@ function syncView() {
 
 const TABS = [
   { id: 'overview', label: '课件分析', icon: 'chart' },
+  { id: 'combine', label: '结合课件讲解', icon: 'wand' },
   { id: 'examples', label: '事例讲解', icon: 'bulb' },
   { id: 'guide', label: '教学应用', icon: 'compass' },
   { id: 'narration', label: '逐页讲解', icon: 'mic' },
@@ -462,12 +463,14 @@ function renderSidebar() {
           if (f.meta?.slides) bits.push(`${f.meta.slides} 页幻灯片`);
           if (f.meta?.withNotes) bits.push(`${f.meta.withNotes} 页备注`);
           if (f.chars) bits.push(`${f.chars.toLocaleString()} 字`);
+          const role = f.role || 'other';
           return `
         <div class="file-card" data-id="${f.id}">
           <span class="ext ${esc(ext)}">${esc(ext.slice(0, 4).toUpperCase())}</span>
           <div>
             <div class="fname">${esc(f.originalName)}</div>
-            <div class="fmeta">${esc(bits.join(' · '))}</div>
+            <div class="fmeta"><span class="role-tag ${esc(role)}">${esc(f.roleLabel || '附件')}</span> ${esc(bits.join(' · '))}</div>
+            ${f.previewNote ? `<div class="fmeta" style="color:var(--warn)">${esc(f.previewNote)}</div>` : ''}
           </div>
           <div class="ftools">
             <button class="icon-btn" data-act="view" data-id="${f.id}" title="查看提取到的文字">${icon('eye', 14)}</button>
@@ -534,6 +537,7 @@ function renderBody() {
   if (state.tab === 'overview') inner = renderOverview(a.analysis);
   else if (state.tab === 'examples') inner = renderExamples(a.examples);
   else if (state.tab === 'guide') inner = renderGuide(a.guide, a.analysis);
+  else if (state.tab === 'combine') inner = renderCombine();
   else if (state.tab === 'narration') inner = renderNarration(a.narration);
   else if (state.tab === 'quiz') inner = renderQuiz(a.quiz);
   else if (state.tab === 'lab') inner = renderLab(a.lab);
@@ -546,6 +550,7 @@ function renderBody() {
     examples: 'examples',
     guide: 'guide',
     narration: 'narration',
+    combine: 'quiz',
     quiz: 'quiz',
     lab: 'lab',
   };
@@ -568,6 +573,7 @@ function renderBody() {
        </div>`;
   body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${rerunBar}${inner}</div>`;
   if (state.tab === 'narration') wireNarration();
+  else if (state.tab === 'combine') wireCombine();
   else if (state.tab === 'quiz') wireQuiz();
   else if (state.tab === 'lab') wireLab();
   const rb = $('#rerunBtn');
@@ -577,6 +583,14 @@ function renderBody() {
 
 /** 只重跑当前这一节 */
 async function rerunStageUI(stage, btn) {
+  if (stage === 'lab' && !state.project?.shape?.hasLab) {
+    const ok = confirm(
+      '注意：这个项目里没有检测到实验指导文件（文件名通常含 lab）。\n\n' +
+        '接下来生成的 Lab 会是基于课件内容「补充设计」的，可能和你的实际实验器材、步骤不适配。\n\n' +
+        '要继续吗？',
+    );
+    if (!ok) return;
+  }
   const original = btn.textContent;
   btn.disabled = true;
   btn.innerHTML = SPIN_SVG + '重新生成中…';
@@ -695,6 +709,131 @@ function renderOverview(an) {
     : '';
 
   return hero + objectives + prereq + structure + concepts + takeaways + gaps;
+}
+
+/* ------------------- 1.5 结合课件讲解（顶层模式） ------------------- */
+
+/**
+ * 用「课件」里的内容，逐题讲解「习题/作业」里的题目。
+ * 左边是课件对应页的截图，右边是讲解 —— 所有「课件原文」区域一律放截图，不放提取出的文字。
+ */
+function renderCombine() {
+  const a = state.project?.analysis || {};
+  const shape = state.project?.shape || {};
+  const qs = arr(a.quiz?.questions);
+  const cw = arr(shape.courseware)[0];
+  const ex = arr(shape.exercise)[0];
+
+  if (!qs.length) {
+    return `<div class="card">
+      <h3>${icon('wand', 15)}结合课件讲解</h3>
+      <p style="color:var(--ink-2)">还没有题目。这个模式需要一份<b>习题/作业</b>（文件名含 tut / tutorial / assignment 等）才能工作。</p>
+    </div>`;
+  }
+
+  const hero = `<div class="hero" style="background:linear-gradient(135deg,#1b2942,#2f4b7c)">
+    <h1>结合课件讲解</h1>
+    <p>用 ${cw ? `《${esc(cw.originalName)}》` : '课件'}里的内容，逐题讲解${ex ? `《${esc(ex.originalName)}》` : '题目'}中的问题：先点破考什么，再引课件原话，再说怎么落到这道题上。</p>
+    <div class="facts">
+      <span class="fact">共 ${qs.length} 道题</span>
+      ${cw ? `<span class="fact">参考课件：${esc(cw.originalName)}</span>` : ''}
+      ${ex ? `<span class="fact">题目来源：${esc(ex.originalName)}</span>` : ''}
+      <span class="fact">课件原文以原生页面截图呈现</span>
+    </div>
+  </div>`;
+
+  const cards = qs
+    .map((q, i) => {
+      const has = Boolean(explainOf(q.id));
+      return `<div class="card" data-qcard="${esc(q.id)}">
+        <div class="qhead">
+          <span class="qnum">第 ${i + 1} 题</span>
+          ${q.type ? `<span class="tag type">${esc(q.type)}</span>` : ''}
+          ${q.difficulty ? `<span class="tag">${esc(q.difficulty)}</span>` : ''}
+          ${q.source ? `<span class="tag ${q.source === '课件原题' ? 'src' : ''}">${esc(q.source)}</span>` : ''}
+          ${q.location ? `<span class="tag">${icon('pin', 11)}${esc(q.location)}</span>` : ''}
+        </div>
+        <div class="qstem">${esc(q.stem)}</div>
+        ${arr(q.options).length ? `<div class="qopts">${q.options.map((o) => `<div class="option-row" style="cursor:default"><span>${esc(o)}</span></div>`).join('')}</div>` : ''}
+        <div class="qactions">
+          <button class="btn accent" data-explain="${esc(q.id)}">${has ? '查看讲解' : icon('wand', 13) + '结合课件讲解这道题'}</button>
+          <span class="spacer" style="flex:1"></span>
+          <span class="muted" style="font-size:12px">${has ? '已生成，可展开查看' : '会引用课件原话并标注页码'}</span>
+        </div>
+        <div class="combine-slot" data-slot="${esc(q.id)}">${has ? explainPanel(q, explainOf(q.id)) : ''}</div>
+      </div>`;
+    })
+    .join('');
+
+  return hero + cards;
+}
+
+function wireCombine() {
+  $('[data-explain]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const qid = b.dataset.explain;
+      const slot = document.querySelector(`[data-slot="${qid}"]`);
+      if (slot && slot.innerHTML.trim()) {
+        slot.innerHTML = '';
+        b.textContent = '查看讲解';
+        return;
+      }
+      const q = arr(state.project?.analysis?.quiz?.questions).find((x) => String(x.id) === String(qid));
+      if (!q) return;
+      b.disabled = true;
+      const old = b.innerHTML;
+      b.innerHTML = SPIN_SVG + '正在对照课件备课…';
+      try {
+        const res = await api(`/api/projects/${state.project.id}/explain`, {
+          method: 'POST',
+          body: JSON.stringify({ questionId: q.id }),
+        });
+        state.project.explain = state.project.explain || {};
+        state.project.explain[q.id] = { result: res.result, excerpt: res.excerpt, at: new Date().toISOString() };
+        if (slot) slot.innerHTML = explainPanel(q, state.project.explain[q.id]);
+        b.textContent = '收起讲解';
+        if (typeof wireExplainSlides === 'function') wireExplainSlides(slot);
+        toast(res.cached ? '已载入之前的讲解' : '讲解已生成', 'ok');
+      } catch (err) {
+        toast(err.message, 'err');
+        b.innerHTML = old;
+      } finally {
+        b.disabled = false;
+      }
+    }),
+  );
+}
+
+/* ------------------- 上课录像 → 讲解稿 ------------------- */
+
+/** 把上课录像送去转写，并按课件页对齐成讲解稿 */
+async function transcribeVideo() {
+  const shape = state.project?.shape || {};
+  const video = arr(shape.video)[0];
+  if (!video) return toast('项目里没有上课录像', 'err');
+  if (!confirm('会提取录像语音并转写，再按课件页对齐。时间取决于录像长度（可能几分钟到十几分钟），继续吗？')) return;
+
+  const btn = $('#transcribeBtn');
+  const old = btn?.innerHTML;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = SPIN_SVG + '正在转写…';
+  }
+  try {
+    const res = await api(`/api/projects/${state.project.id}/transcribe`, {
+      method: 'POST',
+      body: JSON.stringify({ fileId: video.id }),
+    });
+    state.project = await api(`/api/projects/${state.project.id}`);
+    toast(`转写完成：${res.segments || 0} 段语音，已对齐 ${res.aligned || 0} 页`, 'ok');
+    render();
+  } catch (err) {
+    toast(err.message, 'err');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = old;
+    }
+  }
 }
 
 /* --------------------------- 2. 事例讲解 --------------------------- */
@@ -867,30 +1006,73 @@ function renderGuide(g) {
 /* --------------------------- 4. 逐页讲解 --------------------------- */
 
 function renderNarration(n) {
-  if (!n) return `<div class="note-box">逐页讲解稿没有生成成功，可以重试。</div>`;
-  const segs = arr(n.segments);
+  const shape = state.project?.shape || {};
+  const video = arr(shape.video)[0];
+
+  // 上传了上课录像 → 讲解稿以录像里的真实讲法为准，不再由 AI 生成
+  const videoCard = video
+    ? `<div class="card">
+        <h3>${icon('mic', 15)}上课录像</h3>
+        <video class="lecture-video" src="${esc(video.mediaUrl)}" controls preload="metadata"></video>
+        <div class="slide-bar">
+          <span>${esc(video.originalName)}</span>
+          <span class="spacer"></span>
+          <button class="btn sm accent" id="transcribeBtn">${icon('wand', 13)}从视频生成讲解稿</button>
+        </div>
+        <p class="hint" style="margin:10px 0 0">已检测到上课录像：讲解稿会改用录像里的真实语音（按页对齐），不再由 AI 代写。</p>
+      </div>`
+    : '';
+
+  const segs = arr(n?.segments);
   if (!segs.length) {
-    return `<div class="card"><h3>逐页讲解稿</h3><p style="color:var(--text-2)">没有生成讲解稿。若课件是扫描版 PDF 或纯图片，可能没有可提取的文字。</p></div>`;
+    return `${videoCard}
+      <div class="card">
+        <h3>${icon('mic', 15)}逐页讲解稿</h3>
+        <p style="color:var(--ink-2)">${
+          video
+            ? '还没有讲解稿。点上面的「从视频生成讲解稿」，平台会转写录像语音并按页对齐。'
+            : '没有生成讲解稿。若课件是扫描版 PDF 或纯图片，可能没有可提取的文字。'
+        }</p>
+      </div>`;
   }
+
+  const fromVideo = segs.some((s) => s.fromVideo);
+  const aiCount = segs.filter((s) => s.aiFilled).length;
+
   return `
-    <div class="hero" style="background:linear-gradient(135deg,#0f172a,#1e293b)">
+    ${videoCard}
+    <div class="hero" style="background:linear-gradient(135deg,#141c2c,#24395c)">
       <h1>逐页讲解模式</h1>
-      <p>共 ${segs.length} 页讲解稿。进入全屏后，左边是你要说的话，右边是课件该页的原文和配图，用方向键翻页。</p>
-      <div class="facts"><span class="fact">按方向键或空格翻页</span><span class="fact">按 Esc 退出</span><span class="fact">按 F 全屏</span></div>
+      <p>共 ${segs.length} 页讲解稿。左边是你要说的话，右边是课件的原页面截图，可以单独翻课件页。</p>
+      <div class="facts">
+        <span class="fact">按方向键或空格翻页</span>
+        <span class="fact">按 Esc 退出</span>
+        <span class="fact">按 F 全屏</span>
+        ${fromVideo ? '<span class="fact">讲解稿来源：上课录像</span>' : ''}
+        ${aiCount ? `<span class="fact">其中 ${aiCount} 页为 AI 补写</span>` : ''}
+      </div>
       <div style="margin-top:18px"><button class="btn primary" id="startPresent">${icon('play', 14)}进入全屏讲解</button></div>
     </div>
     ${segs
       .map(
         (s, i) => `<div class="card">
-        <h3><span class="num">${i + 1}</span>${esc(s.location || `第 ${i + 1} 页`)}　<span style="font-weight:500;color:var(--text-2)">${esc(s.title || '')}</span>
+        <h3><span class="num">${i + 1}</span>${esc(s.location || `第 ${i + 1} 页`)}　<span style="font-weight:500;color:var(--ink-2)">${esc(s.title || '')}</span>
+          ${s.aiFilled ? '<span class="tag type">AI 补写</span>' : ''}
+          ${s.fromVideo ? '<span class="tag src">录像原话</span>' : ''}
           <span class="spacer"></span>
           <button class="btn sm ghost" data-jump="${i}">${icon('play', 13)}讲这一页</button>
         </h3>
-        <p style="margin:0 0 12px;font-size:14px;line-height:1.9">${esc(s.script || '')}</p>
-        ${arr(s.keyPoints).length ? `<div class="pill-row" style="margin-bottom:10px">${s.keyPoints.map((k) => `<span class="pill">${esc(k)}</span>`).join('')}</div>` : ''}
-        ${s.askClass ? `<div class="note-box">${icon('help', 13)} 提问：${esc(s.askClass)}</div>` : ''}
-        ${s.board ? `<div class="board-box"><span class="lbl">板书</span>${esc(s.board)}</div>` : ''}
-        ${s.transition ? `<p style="margin:12px 0 0;color:var(--text-3);font-size:12.5px;font-style:italic">→ ${esc(s.transition)}</p>` : ''}
+        <div class="narration-row">
+          <div class="narration-thumb"><div class="slide-stage" data-thumb="${i}"></div></div>
+          <div>
+            ${s.scriptEn ? `<p style="margin:0 0 8px;font-size:13.5px;line-height:1.85;color:var(--ink-2)">${esc(s.scriptEn)}</p>
+              <p style="margin:0 0 12px;font-size:14px;line-height:1.9">${esc(s.script || '')}</p>` : `<p style="margin:0 0 12px;font-size:14px;line-height:1.9">${esc(s.script || '')}</p>`}
+            ${arr(s.keyPoints).length ? `<div class="pill-row" style="margin-bottom:10px">${s.keyPoints.map((k) => `<span class="pill">${esc(k)}</span>`).join('')}</div>` : ''}
+            ${s.askClass ? `<div class="note-box">${icon('help', 13)} 提问：${esc(s.askClass)}</div>` : ''}
+            ${s.board ? `<div class="board-box"><span class="lbl">板书</span>${esc(s.board)}</div>` : ''}
+            ${s.transition ? `<p style="margin:12px 0 0;color:var(--ink-3);font-size:12.5px;font-style:italic">过渡：${esc(s.transition)}</p>` : ''}
+          </div>
+        </div>
       </div>`,
       )
       .join('')}`;
@@ -899,6 +1081,45 @@ function renderNarration(n) {
 function wireNarration() {
   $('#startPresent')?.addEventListener('click', () => openPresenter(0));
   $$('[data-jump]').forEach((b) => b.addEventListener('click', () => openPresenter(Number(b.dataset.jump))));
+  $('#transcribeBtn')?.addEventListener('click', () => transcribeVideo());
+
+  // 缩略图懒渲染：滚到可见才画，避免一次渲染几十页 PDF
+  const segs = arr(state.project?.analysis?.narration?.segments);
+  const thumbs = $$('[data-thumb]');
+  const paint = (el) => {
+    const target = slideTarget(segs[Number(el.dataset.thumb)]);
+    mountSlide(el, target?.file?.previewPdf, target?.page || 1, { width: 520 });
+  };
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          io.unobserve(e.target);
+          paint(e.target);
+        }
+      },
+      { rootMargin: '400px' },
+    );
+    thumbs.forEach((el) => io.observe(el));
+  } else {
+    thumbs.forEach(paint);
+  }
+}
+
+/**
+ * 找出某段讲解稿对应「哪份课件的哪一页」，用于右侧/左侧的课件截图。
+ * 优先用预览 PDF（真截图），找不到就退回第一份能做截图的文件。
+ */
+function slideTarget(seg) {
+  const found = seg ? findBlock(seg.location) : null;
+  if (found?.file?.previewPdf) {
+    const page = Number(found.block?.page ?? found.block?.index ?? 1) || 1;
+    return { file: found.file, page };
+  }
+  const files = state.project?.files || [];
+  const f = files.find((x) => x.previewPdf && x.role === 'courseware') || files.find((x) => x.previewPdf);
+  return f ? { file: f, page: 1 } : null;
 }
 
 /** 把讲解稿的位置（第N页）映射回抽取到的原文块 */
@@ -928,8 +1149,12 @@ function findBlock(location) {
   if (!candidates.length) return null;
   // PPTX 是「第N页幻灯片」，PDF 是「第N页」；同一项目里两种会撞号，这里消歧
   const isSlide = (c) => c.block.type === 'slide' || c.file.kind === 'pptx';
+  // 同一页码在多份文件里都存在时（例如「实验指导」和「课件」都是第1页），优先用「课件」
+  const isCourseware = (c) => c.file.role === 'courseware';
   if (wantSlide) return candidates.find(isSlide) || candidates[0];
-  return candidates.find((c) => !isSlide(c)) || candidates[0];
+
+  const nonSlide = candidates.filter((c) => !isSlide(c));
+  return nonSlide.find(isCourseware) || nonSlide[0] || candidates.find(isCourseware) || candidates[0];
 }
 
 /* --------------------------- 全屏讲解模式 --------------------------- */
@@ -941,6 +1166,7 @@ function openPresenter(index = 0) {
     return;
   }
   state.presenter.index = Math.max(0, Math.min(index, segs.length - 1));
+  state.presenter.slideOffset = 0;
   state.presenter.seconds = 0;
   renderPresenter();
   clearInterval(state.presenter.timer);
@@ -969,14 +1195,13 @@ function renderPresenter() {
   const i = state.presenter.index;
   const s = segs[i];
   if (!s) return closePresenter();
-  const found = findBlock(s.location);
-  const block = found?.block;
-  const images = (block?.images || found?.file?.media || []).slice(0, 4);
+  const target = slideTarget(s);
+  const pdf = target?.file?.previewPdf || '';
+  const basePage = target?.page || 1;
+  const offset = state.presenter.slideOffset || 0;
+  const page = Math.max(1, basePage + offset);
   const pct = ((i + 1) / segs.length) * 100;
-
-  const slideText = block
-    ? String(block.text || '').replace(/【演讲者备注】[\s\S]*$/, '').trim() || '（本页没有可提取的文字，可能整页是图片）'
-    : '（没有找到对应的课件原文，可能位置标注与文件不一致）';
+  const noShot = target && !pdf ? target.file.previewNote || '这份文件暂时生成不了截图' : '';
 
   $('#presenterRoot').innerHTML = `
     <div class="presenter">
@@ -990,8 +1215,14 @@ function renderPresenter() {
       </div>
       <div class="presenter-main">
         <div class="presenter-col">
-          <div class="col-label">照着讲 · 讲解稿</div>
-          <div class="script-text">${esc(s.script || '（本页没有讲解稿）')}</div>
+          <div class="col-label">照着讲 · 讲解稿${s.scriptEn ? '（上：英文原话　下：中文翻译）' : ''}</div>
+          ${
+            s.scriptEn
+              ? `<div class="script-text en">${esc(s.scriptEn)}</div>
+                 <div class="script-zh-tag">中文翻译</div>
+                 <div class="script-text">${esc(s.script || '（本页没有讲解稿）')}</div>`
+              : `<div class="script-text">${esc(s.script || '（本页没有讲解稿）')}</div>`
+          }
           ${
             arr(s.keyPoints).length
               ? `<div class="kp"><h5>必须让学生记住</h5><ul class="clean">${s.keyPoints.map((k) => `<li>${esc(k)}</li>`).join('')}</ul></div>`
@@ -999,18 +1230,24 @@ function renderPresenter() {
           }
           ${s.askClass ? `<div class="ask">${icon('help', 13)} 提问：${esc(s.askClass)}</div>` : ''}
           ${s.board ? `<div class="board-dark">${esc(s.board)}</div>` : ''}
-          ${s.transition ? `<div class="transition-row">→ 过渡：${esc(s.transition)}</div>` : ''}
+          ${s.transition ? `<div class="transition-row">过渡：${esc(s.transition)}</div>` : ''}
         </div>
         <div class="presenter-col">
-          <div class="col-label">课件原文 · ${esc(found?.file?.originalName || '未匹配到文件')}</div>
-          <div class="slide-view">${esc(slideText)}</div>
-          ${images.length ? `<div class="slide-media">${images.map((im) => `<img src="${esc(im.url)}" alt="课件配图" loading="lazy">`).join('')}</div>` : ''}
+          <div class="col-label">课件 · ${esc(target?.file?.originalName || '未匹配到课件')}</div>
+          <div class="slide-stage" id="presSlide"></div>
+          <div class="slide-bar">
+            <button id="presSlidePrev" ${offset <= 0 ? 'disabled' : ''}>${icon('left', 12)}上一页</button>
+            <span>第 <b id="presSlideNum">${page}</b> / <span id="presSlideTotal">…</span> 页</span>
+            <button id="presSlideNext">下一页${icon('right', 12)}</button>
+            <span class="spacer"></span>
+            <span>${esc(noShot)}</span>
+          </div>
         </div>
       </div>
       <div class="presenter-foot">
-        <button id="presPrev" ${i === 0 ? 'disabled' : ''}>${icon('left', 13)}上一页</button>
+        <button id="presPrev" ${i === 0 ? 'disabled' : ''}>${icon('left', 13)}上一段</button>
         <div class="bar"><i style="width:${pct}%"></i></div>
-        <button id="presNext" ${i === segs.length - 1 ? 'disabled' : ''}>下一页${icon('right', 13)}</button>
+        <button id="presNext" ${i === segs.length - 1 ? 'disabled' : ''}>下一段${icon('right', 13)}</button>
       </div>
     </div>`;
 
@@ -1021,6 +1258,25 @@ function renderPresenter() {
   });
   $('#presPrev').addEventListener('click', () => goPresenter(-1));
   $('#presNext').addEventListener('click', () => goPresenter(1));
+
+  // 课件翻页（在同一段讲解里自由前后翻课件）
+  const flip = (d) => {
+    const next = Math.max(0, (state.presenter.slideOffset || 0) + d);
+    state.presenter.slideOffset = next;
+    renderPresenter();
+  };
+  $('#presSlidePrev').addEventListener('click', () => flip(-1));
+  $('#presSlideNext').addEventListener('click', () => flip(1));
+
+  mountSlide($('#presSlide'), pdf, page, { width: 1500 });
+  slideCount(pdf).then((total) => {
+    const el = $('#presSlideTotal');
+    if (el) el.textContent = total || '?';
+    const nx = $('#presSlideNext');
+    if (nx && total && page >= total) nx.disabled = true;
+  });
+
+
 }
 
 function goPresenter(delta) {
@@ -1028,6 +1284,7 @@ function goPresenter(delta) {
   const next = state.presenter.index + delta;
   if (next < 0 || next >= segs.length) return;
   state.presenter.index = next;
+  state.presenter.slideOffset = 0; // 换段就回到该段对应的课件页
   renderPresenter();
 }
 

@@ -183,5 +183,71 @@ export function publicConfig() {
     providers: PROVIDERS,
     keyUrl: DEFAULT_KEY_URL,
     siteName: process.env.SITE_NAME || '课件讲解平台',
+    xfyun: xfyunPublic(),
+    renderer: rendererState(),
   };
 }
+
+/* --------------------------- 讯飞语音转写凭据 --------------------------- */
+/**
+ * 凭据来源：环境变量 → data/config.json（已被 .gitignore 排除）。
+ * 永远不会回传前端，只回传「配没配」。
+ */
+export function xfyunConfig() {
+  const saved = readJson(CONFIG_FILE, {});
+  const x = saved.xfyun || {};
+  return {
+    appId: process.env.XFYUN_APP_ID || x.appId || '',
+    // 录音文件转写真正用来签名的是 Secret Key（控制台里的那串 32 位十六进制）
+    secretKey: process.env.XFYUN_SECRET_KEY || x.secretKey || '',
+    apiKey: process.env.XFYUN_API_KEY || x.apiKey || '',
+    apiSecret: process.env.XFYUN_API_SECRET || x.apiSecret || '',
+  };
+}
+
+export function hasXfyun() {
+  const c = xfyunConfig();
+  // 录音文件转写只需要 APPID + Secret Key
+  return Boolean(c.appId && (c.secretKey || c.apiSecret));
+}
+
+export function xfyunPublic() {
+  const c = xfyunConfig();
+  return { configured: hasXfyun(), appId: c.appId ? c.appId.slice(0, 4) + '****' : '' };
+}
+
+/* ------------------------------ 渲染器状态 ------------------------------ */
+
+let rendererCache = null;
+
+/** 检测 LibreOffice / pdftoppm 是否可用（结果缓存，避免每次请求都探测） */
+export function rendererState() {
+  if (rendererCache) return rendererCache;
+  const candidates = [
+    '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+    '/usr/local/bin/soffice',
+    '/opt/homebrew/bin/soffice',
+  ];
+  let soffice = '';
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        soffice = p;
+        break;
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
+  rendererCache = {
+    office: Boolean(soffice),
+    soffice,
+    note: soffice ? '' : '未检测到 LibreOffice，PPTX/DOCX 无法转成截图，只能显示文字',
+  };
+  return rendererCache;
+}
+
+export function resetRendererCache() {
+  rendererCache = null;
+}
+

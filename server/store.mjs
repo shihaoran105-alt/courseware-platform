@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CACHE_DIR, DATA_DIR, isPublicMode } from './config.mjs';
 import { buildContext } from './extract/index.mjs';
+import { classifyRole, projectShape, roleLabel } from './roles.mjs';
 
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -140,6 +141,12 @@ export function deleteProject(id) {
   if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
 }
 
+/** 遍历所有项目（启动补齐数据用） */
+export function forEachProject(fn) {
+  loadAll();
+  for (const p of projects.values()) fn(p);
+}
+
 export function loadAll() {
   if (!fs.existsSync(CACHE_DIR)) return;
   for (const name of fs.readdirSync(CACHE_DIR)) {
@@ -174,13 +181,21 @@ export function slimProject(project, sid = '') {
     attempts: project.attempts || {},
     labProgress: project.labProgress || {},
     explain: project.explain || {},
+    shape: projectShape(project.files || []),
     files: project.files.map((f) => ({
       id: f.id,
       originalName: f.originalName,
       kind: f.kind,
+      role: f.role || classifyRole(f.originalName, f.kind),
+      roleLabel: f.roleLabel || roleLabel(f.role || classifyRole(f.originalName, f.kind)),
       size: f.size,
       chars: f.chars,
       meta: f.meta,
+      // 「课件原文」区域靠这个 PDF 在浏览器里逐页渲染成截图
+      previewPdf: f.previewPdf || '',
+      previewNote: f.previewNote || '',
+      // 上课录像的播放地址
+      mediaUrl: f.mediaUrl || '',
       media: (f.media || []).map((m) => ({ url: m.url, fileName: m.fileName })),
       blockCount: f.blocks?.length || 0,
       // 讲解模式需要原文对照，这里带上每个块（单块文字截断，避免响应过大）

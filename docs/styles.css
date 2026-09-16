@@ -509,6 +509,15 @@ ul.clean li::marker { color: var(--ink-4); }
   margin-bottom: 16px; text-transform: uppercase;
 }
 .script-text { font-size: 19px; line-height: 2.05; color: #eef2fa; font-weight: 400; }
+/* 英文授课：上面放英文原话，下面放中文翻译 */
+.script-text.en {
+  font-size: 15px; line-height: 1.85; color: #9aa8c2; font-style: italic;
+  padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.script-zh-tag {
+  font-size: 10px; letter-spacing: 0.12em; color: #5d6880; font-weight: 700;
+  text-transform: uppercase; margin: 12px 0 8px;
+}
 
 .presenter .kp { margin-top: 26px; }
 .presenter .kp h5 {
@@ -1015,3 +1024,83 @@ ul.clean li::marker { color: var(--ink-4); }
 .explain-source::-webkit-scrollbar-thumb,
 .explain-ai::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.16); background-clip: content-box; }
 .presenter ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); background-clip: content-box; }
+
+
+/* ============================================================
+   课件截图（替代原来的「课件原文」文字）
+   ============================================================ */
+
+.slide-stage {
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  overflow: hidden;
+}
+.slide-stage .slide-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  background: #fff;
+}
+.slide-loading, .slide-missing {
+  font-size: 12.5px; color: var(--ink-4); text-align: center; line-height: 1.9;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px 10px;
+}
+.slide-missing span { font-size: 11.5px; color: var(--ink-4); opacity: .8; }
+
+/* 讲解模式右侧的课件 */
+.presenter .slide-stage {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.09);
+  padding: 0;
+  min-height: 0;
+}
+.presenter .slide-stage .slide-img { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45); }
+.presenter .slide-loading, .presenter .slide-missing { color: #5d6880; }
+
+.slide-bar {
+  display: flex;
+  align-items: center; gap: 10px; margin-top: 12px;
+  font-size: 12px; color: var(--ink-3);
+}
+.slide-bar .spacer { flex: 1; }
+.slide-bar button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 11px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-2); background: var(--surface);
+  font-size: 12px; color: var(--ink-2);
+}
+.slide-bar button:hover:not(:disabled) { border-color: var(--brand-2); color: var(--brand); }
+.slide-bar button:disabled { opacity: .4; cursor: not-allowed; }
+.presenter .slide-bar { color: #6b7793; }
+.presenter .slide-bar button {
+  background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.12); color: #dbe3f0;
+}
+.presenter .slide-bar button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); color: #fff; }
+
+/* 逐页讲解列表里的缩略图 */
+.narration-row { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .narration-row { grid-template-columns: 1fr; } }
+.narration-thumb .slide-stage { min-height: 130px; }
+
+/* 文件角色的标记 */
+.role-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 7px; border-radius: 4px; text-transform: uppercase;
+}
+.role-tag.lab { background: var(--teal-soft); color: var(--teal); border: 1px solid var(--teal-line); }
+.role-tag.exercise { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line); }
+.role-tag.courseware { background: var(--brand-soft); color: var(--brand); border: 1px solid var(--brand-line); }
+.role-tag.video { background: #fdf1f6; color: #9d2b62; border: 1px solid #f3c9dc; }
+.role-tag.other { background: var(--surface-3); color: var(--ink-3); border: 1px solid var(--line); }
+
+/* 上课录像播放 */
+.lecture-video { width: 100%; border-radius: var(--radius); background: #000; display: block; }

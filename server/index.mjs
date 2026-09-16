@@ -32,9 +32,24 @@ import {
 } from './store.mjs';
 import { QUOTAS, addBytes, checkRate, overStorage, sessionMiddleware, sweepSessions } from './session.mjs';
 import { ACCEPT_HINT, classify, extractFile, fileToText } from './extract/index.mjs';
-import { runFullAnalysis, rerunStage, askQuestion, gradeAnswer, checkLab, explainQuestion } from './ai/pipeline.mjs';
+import {
+  runFullAnalysis,
+  rerunStage,
+  askQuestion,
+  gradeAnswer,
+  checkLab,
+  explainQuestion,
+  alignTranscript,
+  translateSegments,
+  fillMissingScripts,
+} from './ai/pipeline.mjs';
+import { extractAudio, ffmpegState } from './media-tools.mjs';
+import { sttProvider, sttState, transcribe } from './stt.mjs';
+import { rendererState } from './config.mjs';
 import { complete } from './ai/client.mjs';
 import { toMarkdown } from './export.mjs';
+import { buildPreviewPdf, canRender, mediaName } from './render.mjs';
+import { classifyRole, isDocKind, roleLabel } from './roles.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -176,7 +191,13 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, service: '课件讲�
 
 app.get('/api/config', (req, res) => {
   const hasDemo = listProjects(req.sid).some((p) => p.shared);
-  res.json({ ...publicConfig(), hasDemo });
+  res.json({
+    ...publicConfig(),
+    hasDemo,
+    stt: sttState(),
+    ffmpeg: ffmpegState(),
+    renderer: rendererState(),
+  });
 });
 
 /** 本机模式下允许在页面里保存 Key；公开模式禁止（避免把部署者的 Key 写进去） */
@@ -267,16 +288,20 @@ app.post('/api/projects/:id/upload', (req, res, next) => {
 
   for (const f of incoming) {
     const originalName = fixName(f.originalname);
+    const fileId = newId('file');
     try {
       const buffer = await fs.promises.readFile(f.path);
       const mediaBase = `/media/${project.id}`;
       const result = await extractFile({ buffer, originalName, storedPath: f.path, mediaBase });
+      const ext = (originalName.split('.').pop() || '').toLowerCase();
+      const role = classifyRole(originalName, result.kind);
 
-      // PPTX 里抽出来的图片落盘
+      const dir = path.join(MEDIA_DIR, project.id);
+      await fs.promises.mkdir(dir, { recursive: true });
+
+      // 1) PPTX 里抽出来的图片落盘
       const media = [];
       if (result.media?.length) {
-        const dir = path.join(MEDIA_DIR, project.id);
-        await fs.promises.mkdir(dir, { recursive: true });
         for (const m of result.media) {
           const target = path.join(dir, path.basename(m.fileName));
           await fs.promises.writeFile(target, m.buffer);
@@ -284,24 +309,61 @@ app.post('/api/projects/:id/upload', (req, res, next) => {
         }
       }
 
+      // 2) 生成预览 PDF —— 「课件原文」区域要放的是原文件的截图，靠这个 PDF 在浏览器里逐页画出来
+      let previewPdf = '';
+      let previewNote = '';
+      if (isDocKind(result.kind)) {
+        if (canRender(ext)) {
+          const pdfName = `${fileId}.pdf`;
+          const r = await buildPreviewPdf({ srcPath: f.path, ext, outPath: path.join(dir, pdfName) });
+          if (r.ok) previewPdf = `${mediaBase}/${pdfName}`;
+          else previewNote = r.reason || '生成截图失败';
+        } else {
+          previewNote = `.${ext} 暂不支持生成截图，本页只能显示提取出的文字`;
+        }
+      }
+
+      // 3) 音视频：复制到媒体目录，页面上可以直接播放
+      let mediaUrl = '';
+      if (role === 'video') {
+        const vName = mediaName('av', ext || 'bin');
+        await fs.promises.copyFile(f.path, path.join(dir, vName));
+        mediaUrl = `${mediaBase}/${vName}`;
+      }
+
       const text = fileToText(result);
       const record = {
-        id: newId('file'),
+        id: fileId,
         originalName,
         storedName: path.basename(f.path),
         kind: result.kind,
+        role,
+        roleLabel: roleLabel(role),
         size: f.size,
         chars: text.length,
         meta: result.meta || {},
         blocks: result.blocks || [],
         media,
+        previewPdf,
+        previewNote,
+        mediaUrl,
         text,
         preview: text.slice(0, 600),
         addedAt: new Date().toISOString(),
       };
       project.files.push(record);
       bytes += Number(f.size) || 0;
-      added.push({ id: record.id, originalName, kind: record.kind, chars: record.chars, meta: record.meta });
+      added.push({
+        id: record.id,
+        originalName,
+        kind: record.kind,
+        role: record.role,
+        roleLabel: record.roleLabel,
+        chars: record.chars,
+        hasPreview: Boolean(record.previewPdf),
+        previewNote: record.previewNote,
+        meta: record.meta,
+      });
     } catch (err) {
       failed.push({ originalName, error: err.message });
       await fs.promises.unlink(f.path).catch(() => {});
@@ -367,6 +429,7 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
 
   try {
     const files = contextFor(project, cfg.maxInputChars);
+    const hasVideo = project.files.some((f) => f.role === 'video');
     const hasText = project.files.some((f) => classify(f.originalName) === 'document' && f.chars > 0);
     stream.send({
       type: 'start',
@@ -381,6 +444,8 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
       files,
       cfg,
       signal: controller.signal,
+      // 上传了上课录像 → 讲解稿以录像为准，这一轮不生成 narration
+      skipNarration: hasVideo,
       emit: (evt) => stream.send(evt),
     });
 
@@ -512,6 +577,138 @@ app.delete('/api/projects/:id/explain/:questionId', (req, res) => {
   if (project.explain) delete project.explain[req.params.questionId];
   persist(project);
   res.json({ ok: true, explain: project.explain || {} });
+});
+
+/**
+ * 上课录像 → 逐页讲解稿
+ * 提取音轨 → 语音转写 → 按课件页对齐 →（英文则翻中文）→ 补写录像没讲到的页
+ */
+app.post('/api/projects/:id/transcribe', async (req, res) => {
+  const project = editableProjectOr404(req, res);
+  if (!project) return;
+
+  const files = project.files || [];
+  const video = files.find((f) => f.id === req.body?.fileId) || files.find((f) => f.role === 'video');
+  if (!video) {
+    res.status(404).json({ error: '项目里没有上课录像' });
+    return;
+  }
+  if (!video.mediaUrl) {
+    res.status(400).json({ error: '这段录像没有可读取的媒体地址，请重新上传' });
+    return;
+  }
+  if (!rateLimitOr429(req, res, 'analyze')) return;
+  const cfg = aiConfigOr401(req, res);
+  if (!cfg) return;
+  if (sttProvider() === 'none') {
+    res.status(400).json({ error: '没有配置语音转写服务。请配置讯飞凭据，或设置 OPENAI_API_KEY。' });
+    return;
+  }
+  if (!ffmpegState().available) {
+    res.status(400).json({ error: '未安装 ffmpeg，无法从录像里提取音频。请先 brew install ffmpeg。' });
+    return;
+  }
+
+  const controller = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) controller.abort();
+  });
+
+  const stream = sse(res);
+  try {
+    const srcPath = path.join(UPLOAD_DIR, video.storedName);
+    const workDir = path.join(MEDIA_DIR, project.id, 'av');
+    await fs.promises.mkdir(workDir, { recursive: true });
+    const audioPath = path.join(workDir, `${video.id}.wav`);
+
+    stream.send({ type: 'stage-detail', stage: 'transcribe', message: '正在提取音轨…' });
+    const audio = await extractAudio(srcPath, audioPath);
+    if (!audio.ok) throw new Error(audio.reason);
+    stream.send({
+      type: 'stage-detail',
+      stage: 'transcribe',
+      message: `音轨已提取，时长约 ${Math.round(audio.duration / 60)} 分钟，开始转写…`,
+    });
+
+    const asr = await transcribe(audioPath, {
+      durationMs: Math.round((audio.duration || 0) * 1000),
+      onProgress: (m) => stream.send({ type: 'stage-detail', stage: 'transcribe', message: m }),
+    });
+    stream.send({
+      type: 'stage-detail',
+      stage: 'transcribe',
+      message: `转写完成：${asr.segments.length} 句（${asr.provider}），正在按课件页对齐…`,
+    });
+
+    const fileSet = { list: files.map((x) => ({ ...x, text: x.text || '' })) };
+    const { segments, lang } = await alignTranscript({
+      cfg,
+      files: fileSet,
+      transcript: asr.segments,
+      signal: controller.signal,
+    });
+
+    let out = segments;
+    if (lang === 'en') {
+      stream.send({ type: 'stage-detail', stage: 'transcribe', message: '检测到英文授课，正在翻译成中文…' });
+      out = await translateSegments({ cfg, segments: out, signal: controller.signal });
+    }
+    stream.send({ type: 'stage-detail', stage: 'transcribe', message: '正在为录像没讲到的页面补写讲解稿…' });
+    out = await fillMissingScripts({
+      cfg,
+      files: fileSet,
+      segments: out,
+      signal: controller.signal,
+      emit: (e) => stream.send(e),
+    });
+
+    const finalSegments = out.map((s) => {
+      const fromVideo = Boolean(s.transcript);
+      // 录像讲到这一页 → 用老师原话；英文课再附一份中文翻译（英文原文放 scriptEn）
+      // 录像没讲到 → 用 AI 补写的稿子（在 s.script 里），不能丢
+      const script = fromVideo ? (lang === 'en' ? s.zh || s.transcript : s.transcript) : s.script || '';
+      return {
+        location: s.location,
+        title: s.title || '',
+        script,
+        scriptEn: fromVideo && lang === 'en' ? s.transcript : '',
+        fromVideo,
+        aiFilled: !fromVideo,
+        start: s.start || 0,
+        end: s.end || 0,
+        keyPoints: s.keyPoints || [],
+        askClass: s.askClass || '',
+        board: '',
+        transition: s.transition || '',
+      };
+    });
+
+    project.analysis = project.analysis || {};
+    project.analysis.narration = {
+      ...(project.analysis.narration || {}),
+      segments: finalSegments,
+      source: 'video',
+      lang,
+      provider: asr.provider,
+      generatedAt: new Date().toISOString(),
+    };
+    project.narrationFromVideo = true;
+    persist(project);
+
+    stream.send({
+      type: 'done',
+      segments: finalSegments.length,
+      aligned: finalSegments.filter((s) => s.fromVideo).length,
+      lang,
+      provider: asr.provider,
+      project: slim(req, project),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
+    else stream.send({ type: 'fatal', message: err.message });
+  } finally {
+    stream.close();
+  }
 });
 
 /** 只保存作答、不批改（防止手滑丢答案；不调用模型，所以不需要 Key） */
@@ -732,6 +929,49 @@ setInterval(() => sweepSessions(), 6 * 3600 * 1000).unref?.();
 
 const ttlDays = process.env.AUTO_CLEANUP === '0' ? 0 : Number(process.env.CLEANUP_TTL_DAYS) || 14;
 
+/**
+ * 老项目是在「文件角色」和「页面截图」这两个功能之前建的，
+ * 启动时补一次：识别角色 + 生成缺失的预览 PDF。不阻塞服务启动。
+ */
+async function backfillProjects() {
+  let touched = 0;
+  const { forEachProject } = await import('./store.mjs');
+  const jobs = [];
+  forEachProject((project) => jobs.push(project));
+  for (const project of jobs) {
+    let changed = false;
+    for (const file of project.files || []) {
+      if (!file.role) {
+        file.role = classifyRole(file.originalName, file.kind);
+        file.roleLabel = roleLabel(file.role);
+        changed = true;
+      }
+      const ext = (file.originalName.split('.').pop() || '').toLowerCase();
+      if (isDocKind(file.kind) && !file.previewPdf && canRender(ext)) {
+        try {
+          const outPath = path.join(MEDIA_DIR, project.id, `${file.id}.pdf`);
+          const r = await buildPreviewPdf({ srcPath: path.join(UPLOAD_DIR, file.storedName), ext, outPath });
+          if (r.ok) {
+            file.previewPdf = `/media/${project.id}/${file.id}.pdf`;
+            file.previewNote = '';
+            changed = true;
+          } else {
+            file.previewNote = r.reason || '生成截图失败';
+            changed = true;
+          }
+        } catch {
+          /* 单个文件失败不影响其他 */
+        }
+      }
+    }
+    if (changed) {
+      persist(project);
+      touched++;
+    }
+  }
+  return touched;
+}
+
 app.listen(PORT, HOST, () => {
   const { apiKey, source } = serverKey();
   const lines = [
@@ -767,6 +1007,13 @@ app.listen(PORT, HOST, () => {
     const removed = cleanupExpiredProjects(ttlDays);
     if (removed) console.log(`  已清理 ${removed} 个过期项目\n`);
   }
+
+  // 后台补齐老项目（不阻塞启动）
+  backfillProjects()
+    .then((n) => {
+      if (n) console.log(`  已为 ${n} 个老项目补齐文件角色与页面截图\n`);
+    })
+    .catch((err) => console.warn('  补齐老项目时出错：' + err.message));
 });
 
 export { app, fixName };

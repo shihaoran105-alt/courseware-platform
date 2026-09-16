@@ -120,16 +120,31 @@ async function newProject(name = '未命名课件') {
   return project;
 }
 
+/** blob URL 刷新后失效，每次载入项目时重新生成 */
+function hydrate(project) {
+  if (!project) return project;
+  for (const f of project.files || []) {
+    if (f.pdfBytes && !f.previewPdf) {
+      try {
+        f.previewPdf = URL.createObjectURL(new Blob([f.pdfBytes], { type: 'application/pdf' }));
+      } catch {
+        f.previewNote = '无法在本地渲染这个 PDF';
+      }
+    }
+  }
+  return project;
+}
+
 /** 服务端版是「每个 cookie 会话一份空间」，静态版就是「这个浏览器一份空间」 */
 async function currentProject() {
   const id = currentId();
   if (id) {
-    const p = await getProject(id);
+    const p = hydrate(await getProject(id));
     if (p) return p;
   }
   const all = await allProjects();
   if (all.length) {
-    const p = all.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0];
+    const p = hydrate(all.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0]);
     setCurrentId(p.id);
     return p;
   }
@@ -158,8 +173,20 @@ async function upload(_projectId, files, onProgress) {
     const file = list[i];
     onProgress?.((i + 0.15) / list.length);
     try {
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
       const result = await extractFile(file);
       const text = fileToText(result);
+
+      // 纯静态版没有 LibreOffice：PDF 直接把原始字节留在本地，用 pdf.js 现渲染成截图；
+      // PPTX/DOCX 浏览器渲染不了，只能退回文字。
+      let pdfBytes = null;
+      let previewNote = '';
+      if (result.kind === 'pdf') {
+        pdfBytes = await file.arrayBuffer();
+      } else if (['pptx', 'ppt', 'docx', 'doc', 'rtf'].includes(ext)) {
+        previewNote = '纯静态版无法把 Office 文档渲染成截图（需要 LibreOffice），本页显示提取出的文字';
+      }
+
       const record = {
         id: newId('file'),
         originalName: file.name,
@@ -169,6 +196,8 @@ async function upload(_projectId, files, onProgress) {
         meta: result.meta || {},
         blocks: result.blocks || [],
         media: (result.media || []).map((m) => ({ url: m.url, fileName: m.fileName, mime: m.mime })),
+        pdfBytes,
+        previewNote,
         text,
         preview: text.slice(0, 600),
         addedAt: new Date().toISOString(),
@@ -252,7 +281,7 @@ export async function api(path, options = {}) {
   if (p === '/api/projects' && method === 'POST') return slim(await newProject((body.name || '未命名课件').slice(0, 120)));
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)$/))) {
-    const project = await getProject(m[1]);
+    const project = hydrate(await getProject(m[1]));
     if (!project) throw Object.assign(new Error('项目不存在或已被删除'), { status: 404 });
     if (method === 'DELETE') {
       await delProject(m[1]);
@@ -404,6 +433,15 @@ export async function api(path, options = {}) {
     project.chat = [];
     await save(project);
     return { ok: true };
+  }
+
+  if (p.endsWith('/transcribe')) {
+    throw Object.assign(
+      new Error(
+        '纯静态版不支持课堂录像转写：转写要先在服务端提取音轨、再用语音接口识别，浏览器里做不到（也会暴露你的密钥）。\n\n请在服务端版里用这个功能，或直接把录像当附件在这里播放。',
+      ),
+      { status: 400 },
+    );
   }
 
   throw Object.assign(new Error(`静态版不支持这个接口：${p}`), { status: 404 });
