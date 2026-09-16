@@ -769,13 +769,14 @@ function renderCombine() {
 }
 
 function wireCombine() {
-  $('[data-explain]').forEach((b) =>
+  // 注意：$ 是 querySelector（单个元素），这里要遍历所有题目按钮，必须用 $$
+  $$('[data-explain]').forEach((b) =>
     b.addEventListener('click', async () => {
       const qid = b.dataset.explain;
       const slot = document.querySelector(`[data-slot="${qid}"]`);
       if (slot && slot.innerHTML.trim()) {
         slot.innerHTML = '';
-        b.textContent = '查看讲解';
+        b.innerHTML = icon('wand', 13) + '查看讲解';
         return;
       }
       const q = arr(state.project?.analysis?.quiz?.questions).find((x) => String(x.id) === String(qid));
