@@ -1,0 +1,7 @@
+node_modules/
+data/
+*.log
+.DS_Store
+# 环境变量里可能有 API Key，绝对不要提交
+.env
+.env.local
