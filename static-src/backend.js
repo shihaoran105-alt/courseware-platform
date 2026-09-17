@@ -185,7 +185,7 @@ function findLab(project, lid) {
 
 /* ------------------------------ 上传 ------------------------------ */
 
-async function upload(_projectId, files, onProgress) {
+export async function upload(_projectId, files, onProgress) {
   const project = await currentProject();
   const added = [];
   const failed = [];
