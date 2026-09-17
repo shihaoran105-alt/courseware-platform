@@ -1,0 +1,28 @@
+{
+  "name": "courseware-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "课件讲解平台 — 上传课件，自动分析内容、讲解事例、生成教学应用方案，并支持在线做题与做 Lab",
+  "main": "server/index.mjs",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "start:public": "PUBLIC_MODE=1 HOST=0.0.0.0 node server/index.mjs",
+    "dev": "node --watch server/index.mjs",
+    "demo": "node scripts/mark-demo.mjs",
+    "build:static": "node scripts/build-static.mjs",
+    "preview:static": "node scripts/serve-static.mjs",
+    "test:extract": "node scripts/test-extract.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "iconv-lite": "^0.6.3",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
+    "multer": "^2.0.0",
+    "pdfjs-dist": "^4.10.38"
+  }
+}
