@@ -198,7 +198,7 @@ export GROQ_API_KEY=gsk_xxxxxxxx
 
 ### macOS 双击一键启动（推荐）
 
-在 Finder 里双击 **`一键安装并启动.command`**：
+从 GitHub 下载 **`一键启动器-macOS.zip`**，解压后把其中的 **`一键安装并启动.command`** 放到项目根目录，然后在 Finder 里双击：
 
 - 自动检查 Node.js 20+；本机有 Homebrew 时可自动安装 Node.js
 - 首次运行自动安装项目依赖
