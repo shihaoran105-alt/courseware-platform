@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课件讲解平台</title>
+<meta name="description" content="上传课件，自动分析内容、讲解事例、生成教学方案，并支持在线做题与做 Lab。">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%232f4b7c'/><path d='M20 8 12 4.5 4 8l8 3.5Z' fill='none' stroke='white' stroke-width='1.6' stroke-linejoin='round'/><path d='M7 9.8v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V9.8' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round'/></svg>">
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" id="brandLogo"></span>
+      <div>
+        <div class="name">课件讲解平台</div>
+        <div class="tag">上传课件 · 分析内容 · 讲解事例 · 落地教学</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip" id="modelChip">模型加载中</span>
+    <span class="chip" id="keyChip">检查配置中</span>
+    <button class="btn sm" id="settingsBtn"></button>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>课件文件</h2>
+        <button class="btn sm ghost" id="newProjectBtn" title="新建一个课件项目">新建</button>
+      </div>
+      <div class="sidebar-scroll">
+        <div class="dropzone" id="dropzone">
+          <span class="dz-icon" id="dzIcon"></span>
+          <b>拖拽文件到这里，或点击选择</b>
+          <span>PDF / PPTX / DOCX / TXT / Markdown / CSV / XLSX 等<br>可一次上传多个，单个最大 120MB</span>
+        </div>
+        <input type="file" id="fileInput" multiple hidden>
+        <div class="upload-progress" id="uploadProgress"></div>
+        <div class="file-list" id="fileList"></div>
+      </div>
+      <div class="sidebar-foot">
+        <button class="btn primary block" id="analyzeBtn" disabled></button>
+        <button class="btn block" id="exportBtn" disabled></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <nav class="tabs" id="tabs"></nav>
+      <div class="tab-body" id="tabBody"></div>
+    </main>
+  </div>
+</div>
+
+<div id="presenterRoot"></div>
+<div id="modalRoot"></div>
+<div class="toasts" id="toasts"></div>
+
+<script type="module">
+  import * as pdfjsLib from './vendor/pdf.min.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
+  window.pdfjsLib = pdfjsLib;
+</script>
+<script src="icons.js"></script>
+<script src="slides.js"></script>
+<script src="app.js"></script>
+<script src="quiz-lab.js"></script>
+</body>
+</html>
