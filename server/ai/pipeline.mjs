@@ -124,6 +124,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
   const started = Date.now();
   const context = files.context;
   const summary = fileSummary(files.list);
+  // 有答案册就把答案原文一并交给模型，answer 字段以它为准
+  const key = answerKeyExcerpt(files, {});
   const result = {
     analysis: null,
     examples: null,
@@ -207,7 +209,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: QUIZ_SYSTEM,
-          user: quizUser(context, summary),
+          user: quizUser(context, summary, key.text),
           maxTokens: 8000,
           signal,
         });
@@ -323,7 +325,7 @@ export async function rerunStage({ stage, files, cfg, signal }) {
     case 'quiz': {
       const { data } = await completeJSON(cfg, {
         system: QUIZ_SYSTEM,
-        user: quizUser(context, summary),
+        user: quizUser(context, summary, answerKeyExcerpt(files, {}).text),
         maxTokens: 8000,
         signal,
       });
@@ -428,20 +430,75 @@ export function focusExcerpt(files, location, maxChars = 14000) {
   return out.trim();
 }
 
+/** 位置标记里的「第 N 页」→ N，用来在答案册里找对应页 */
+function pageNumsOf(text = '') {
+  return [...String(text).matchAll(/第\s*(\d+)\s*页/g)].map((m) => Number(m[1]));
+}
+
+/**
+ * 取出「官方标准答案」的原文，交给模型当权威依据。
+ *
+ * 只喂答案册里和这道题相关的页，全塞进去会撑爆上下文、也会让模型跑题。
+ * 定位不到页码时退而给整份答案册（通常答案册不长）。
+ */
+export function answerKeyExcerpt(files, target = {}, maxChars = 12000) {
+  const list = files?.list || [];
+  let solutions = list.filter((f) => f.role === 'solution' && (f.blocks || []).length);
+  if (!solutions.length) return { text: '', from: '' };
+  // 调用方已经配对好是哪一份答案册时，就只用那一份，避免串题
+  if (target.solutionName) {
+    const one = solutions.find((f) => f.originalName === target.solutionName);
+    if (one) solutions = [one];
+  }
+
+  const wantPages = [
+    ...pageNumsOf(target.location),
+    ...pageNumsOf(target.stem),
+  ].filter((n, i, a) => Number.isFinite(n) && a.indexOf(n) === i);
+
+  const parts = [];
+  const names = [];
+  for (const f of solutions) {
+    names.push(f.originalName);
+    const blocks = f.blocks || [];
+    let picked = blocks;
+    if (wantPages.length) {
+      const hit = blocks.filter((b) => {
+        const n = Number(b.page ?? b.index);
+        return Number.isFinite(n) && wantPages.some((x) => Math.abs(x - n) <= 1);
+      });
+      if (hit.length) picked = hit;
+    }
+    for (const b of picked) parts.push(`【${f.originalName} · ${b.label || ''}】\n${String(b.text || '').trim()}`);
+  }
+
+  let text = parts.filter((p) => p.trim()).join('\n\n');
+  if (text.length > maxChars) text = text.slice(0, maxChars) + '\n…（答案册内容较长，已截断）';
+  return { text, from: names.join('、') };
+}
+
 /**
  * 结合课件原文讲解一道题。
  * 同时返回 usedExcerpt，前端可以把「课件原文」和「AI 讲解」并排展示。
  */
-export async function explainQuestion({ cfg, question, files, concepts, title, signal }) {
+export async function explainQuestion({ cfg, question, files, concepts, title, signal, answerKey, answerKeyFrom }) {
   const excerpt = focusExcerpt(files, question.location);
+  // 调用方没显式给答案册时，自己从项目里找一份（答案册和题目按文件名配对）
+  let keyText = answerKey;
+  let keyFrom = answerKeyFrom;
+  if (keyText === undefined) {
+    const found = answerKeyExcerpt(files, { location: question.location, stem: question.stem });
+    keyText = found.text;
+    keyFrom = found.from;
+  }
   const { data, usage } = await completeJSON(cfg, {
     system: EXPLAIN_SYSTEM,
-    user: explainUser({ question, excerpt, concepts, analysisTitle: title }),
+    user: explainUser({ question, excerpt, concepts, analysisTitle: title, answerKey: keyText, answerKeyFrom: keyFrom }),
     maxTokens: 6000,
     temperature: 0.25,
     signal,
   });
-  return { result: data, excerpt, usage };
+  return { result: data, excerpt, answerKeyUsed: keyText ? keyFrom : '', usage };
 }
 
 

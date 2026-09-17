@@ -209,6 +209,8 @@ function explainPanel(q, entry) {
   const r = entry.result || {};
   const blocks = parseExcerpt(entry.excerpt);
   const slideRefs = explainSlideRefs(r);
+  // 这次讲解是不是依据老师发的答案册生成的
+  const keyFrom = entry.answerKeyUsed || '';
 
   return `
   <div class="card explain-card" id="explainAnchor">
@@ -216,6 +218,11 @@ function explainPanel(q, entry) {
       <div>
         <h3>结合课件讲解</h3>
         <p class="explain-sub">左边是课件里的原话，右边是这道题该怎么想</p>
+        ${
+          keyFrom
+            ? `<p class="explain-key">${icon('check', 12)} 答案依据：<b>${esc(keyFrom)}</b>（标准答案已作为权威来源）</p>`
+            : ''
+        }
       </div>
       <div class="explain-head-right">
         ${arr(r.pageRefs)

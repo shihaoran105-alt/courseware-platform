@@ -9,12 +9,14 @@
    所以 app.js / quiz-lab.js 不需要区分自己在哪种模式下运行。
    ============================================================ */
 
-import { askQuestion, explainQuestion, gradeAnswer, checkLab, rerunStage, runFullAnalysis } from './pipeline.js';
+import { askQuestion, answerKeyExcerpt, explainQuestion, gradeAnswer, checkLab, rerunStage, runFullAnalysis } from './pipeline.js';
 import { complete } from './ai.js';
 import { toMarkdown } from './export.js';
 import { PROVIDERS, DEFAULT_KEY_URL } from './providers.js';
 import { ACCEPT_HINT, buildContext, classify, extractFile, fileToText } from './extract.js';
 import { allProjects, currentId, delProject, getProject, putProject, setCurrentId, storageMode } from './store.js';
+// 角色判定和服务器版共用同一份规则，避免两边行为不一致
+import { classifyRole, matchSolution, projectShape, roleLabel } from './roles.js';
 
 const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model' };
 const lsGet = (k) => {
@@ -53,6 +55,23 @@ function aiConfig() {
 
 /* ------------------------------ 项目读写 ------------------------------ */
 
+/** 这道题属于哪份作业/实验，它对应的标准答案是哪一份 */
+function solutionForQuestion(project, question) {
+  const all = project.files || [];
+  const roleOf = (f) => f.role || classifyRole(f.originalName, f.kind);
+  const solutions = all.filter((f) => roleOf(f) === 'solution');
+  if (!solutions.length) return null;
+
+  const loc = String(question?.location || '');
+  const bar = loc.indexOf('｜');
+  const docName = bar >= 0 ? loc.slice(bar + 1).trim() : '';
+  const owner = docName ? all.find((f) => f.originalName === docName) : null;
+  const candidates = all.filter((f) => ['exercise', 'lab'].includes(roleOf(f)));
+  const fallback = candidates.length === 1 ? candidates[0] : null;
+
+  return matchSolution(owner || fallback, solutions);
+}
+
 export function contextFor(project) {
   const list = (project.files || []).map((f) => ({ ...f, text: f.text || '' }));
   return { list, context: buildContext(list, 90000) };
@@ -72,10 +91,13 @@ function slim(project) {
     attempts: project.attempts || {},
     labProgress: project.labProgress || {},
     explain: project.explain || {},
+    shape: projectShape(project.files || []),
     files: (project.files || []).map((f) => ({
       id: f.id,
       originalName: f.originalName,
       kind: f.kind,
+      role: f.role || classifyRole(f.originalName, f.kind),
+      roleLabel: f.roleLabel || roleLabel(f.role || classifyRole(f.originalName, f.kind)),
       size: f.size,
       chars: f.chars,
       meta: f.meta,
@@ -187,10 +209,13 @@ async function upload(_projectId, files, onProgress) {
         previewNote = '纯静态版无法把 Office 文档渲染成截图（需要 LibreOffice），本页显示提取出的文字';
       }
 
+      const role = classifyRole(file.name, result.kind);
       const record = {
         id: newId('file'),
         originalName: file.name,
         kind: result.kind,
+        role,
+        roleLabel: roleLabel(role),
         size: file.size,
         chars: text.length,
         meta: result.meta || {},
@@ -203,7 +228,15 @@ async function upload(_projectId, files, onProgress) {
         addedAt: new Date().toISOString(),
       };
       project.files.push(record);
-      added.push({ id: record.id, originalName: file.name, kind: record.kind, chars: record.chars, meta: record.meta });
+      added.push({
+        id: record.id,
+        originalName: file.name,
+        kind: record.kind,
+        role,
+        roleLabel: roleLabel(role),
+        chars: record.chars,
+        meta: record.meta,
+      });
     } catch (err) {
       failed.push({ originalName: file.name, error: err.message });
     }
@@ -380,17 +413,31 @@ export async function api(path, options = {}) {
     }
     const cfg = aiConfig();
     const files = contextFor(project);
-    const { result, excerpt } = await explainQuestion({
+    // 有答案册就按文件名把这道题和它对应的那份答案配对
+    const solution = solutionForQuestion(project, question);
+    const key = answerKeyExcerpt(files, {
+      location: question.location,
+      stem: question.stem,
+      solutionName: solution?.originalName || '',
+    });
+    const { result, excerpt, answerKeyUsed } = await explainQuestion({
       cfg,
       question,
       files,
       concepts: project.analysis?.analysis?.concepts || [],
       title: project.analysis?.analysis?.title || project.name,
+      answerKey: key.text,
+      answerKeyFrom: key.from,
     });
     project.explain = project.explain || {};
-    project.explain[question.id] = { result, excerpt, at: new Date().toISOString() };
+    project.explain[question.id] = {
+      result,
+      excerpt,
+      answerKeyUsed: answerKeyUsed || '',
+      at: new Date().toISOString(),
+    };
     await save(project);
-    return { ok: true, questionId: question.id, result, excerpt };
+    return { ok: true, questionId: question.id, result, excerpt, answerKeyUsed: answerKeyUsed || '' };
   }
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/lab\/([^/]+)$/)) && method === 'DELETE') {

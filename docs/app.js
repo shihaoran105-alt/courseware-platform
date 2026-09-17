@@ -790,7 +790,12 @@ function wireCombine() {
           body: JSON.stringify({ questionId: q.id }),
         });
         state.project.explain = state.project.explain || {};
-        state.project.explain[q.id] = { result: res.result, excerpt: res.excerpt, at: new Date().toISOString() };
+        state.project.explain[q.id] = {
+          result: res.result,
+          excerpt: res.excerpt,
+          answerKeyUsed: res.answerKeyUsed || '',
+          at: new Date().toISOString(),
+        };
         if (slot) slot.innerHTML = explainPanel(q, state.project.explain[q.id]);
         b.textContent = '收起讲解';
         if (typeof wireExplainSlides === 'function') wireExplainSlides(slot);

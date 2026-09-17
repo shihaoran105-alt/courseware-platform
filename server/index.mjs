@@ -39,6 +39,7 @@ import {
   gradeAnswer,
   checkLab,
   explainQuestion,
+  answerKeyExcerpt,
   alignTranscript,
   translateSegments,
   fillMissingScripts,
@@ -49,7 +50,7 @@ import { rendererState } from './config.mjs';
 import { complete } from './ai/client.mjs';
 import { toMarkdown } from './export.mjs';
 import { buildPreviewPdf, canRender, mediaName } from './render.mjs';
-import { classifyRole, isDocKind, roleLabel } from './roles.mjs';
+import { classifyRole, isDocKind, matchSolution, roleLabel } from './roles.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -525,6 +526,31 @@ app.post('/api/projects/:id/grade', async (req, res) => {
 });
 
 /**
+ * 找出「这道题属于哪份作业/实验，它对应的标准答案是哪一份」。
+ *
+ * 题干里的 location 通常形如「第 3 页｜EIE3311 Tut 01.pdf」，
+ * 把文件名抠出来就能和答案册按文件名配对；抠不出来就退化成只有一份答案时直接用。
+ */
+function solutionForQuestion(project, question) {
+  const all = project.files || [];
+  const roleOf = (f) => f.role || classifyRole(f.originalName, f.kind);
+  const solutions = all.filter((f) => roleOf(f) === 'solution');
+  if (!solutions.length) return null;
+
+  const loc = String(question?.location || '');
+  const bar = loc.indexOf('｜');
+  const docName = bar >= 0 ? loc.slice(bar + 1).trim() : '';
+  const owner = docName ? all.find((f) => f.originalName === docName) : null;
+  // 找不到出题的那份文件时，看项目里唯一的那份习题/实验
+  const fallback =
+    all.filter((f) => ['exercise', 'lab'].includes(roleOf(f))).length === 1
+      ? all.find((f) => ['exercise', 'lab'].includes(roleOf(f)))
+      : null;
+
+  return matchSolution(owner || fallback, solutions);
+}
+
+/**
  * 结合课件讲解题目：产出「知识点 → 课件原文 → 怎么用到本题 → 分步讲解 → 易错点 → 变式题」。
  * 同时把用到的课件原文一起返回，前端可以左右对照。
  */
@@ -552,18 +578,33 @@ app.post('/api/projects/:id/explain', async (req, res) => {
 
   try {
     const files = contextFor(project, cfg.maxInputChars);
-    const { result, excerpt } = await explainQuestion({
+    // 有答案册的话，先按文件名把这道题所属的那份作业/实验和答案配对，
+    // 命中后只喂那一份答案，避免多个 Tut 的答案互相串。
+    const solution = solutionForQuestion(project, question);
+    const key = answerKeyExcerpt(files, {
+      location: question.location,
+      stem: question.stem,
+      solutionName: solution?.originalName || '',
+    });
+    const { result, excerpt, answerKeyUsed } = await explainQuestion({
       cfg,
       question,
       files,
       concepts: project.analysis?.analysis?.concepts || [],
       title: project.analysis?.analysis?.title || project.name,
       signal: controller.signal,
+      answerKey: key.text,
+      answerKeyFrom: key.from,
     });
     project.explain = project.explain || {};
-    project.explain[question.id] = { result, excerpt, at: new Date().toISOString() };
+    project.explain[question.id] = {
+      result,
+      excerpt,
+      answerKeyUsed: answerKeyUsed || '',
+      at: new Date().toISOString(),
+    };
     persist(project);
-    res.json({ ok: true, questionId: question.id, result, excerpt });
+    res.json({ ok: true, questionId: question.id, result, excerpt, answerKeyUsed: answerKeyUsed || '' });
   } catch (err) {
     if (err.name === 'AbortError') return;
     res.status(500).json({ error: err.message });
@@ -941,9 +982,15 @@ async function backfillProjects() {
   for (const project of jobs) {
     let changed = false;
     for (const file of project.files || []) {
-      if (!file.role) {
-        file.role = classifyRole(file.originalName, file.kind);
-        file.roleLabel = roleLabel(file.role);
+      // 角色完全由文件名推导，没有手动覆盖，所以每次启动都重算一遍：
+      // 这样新增的规则（比如「带 solution 字样 = 标准答案」）能应用到老项目上。
+      const role = classifyRole(file.originalName, file.kind);
+      if (file.role !== role) {
+        file.role = role;
+        file.roleLabel = roleLabel(role);
+        changed = true;
+      } else if (!file.roleLabel) {
+        file.roleLabel = roleLabel(role);
         changed = true;
       }
       const ext = (file.originalName.split('.').pop() || '').toLowerCase();
