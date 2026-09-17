@@ -117,13 +117,29 @@ function quizInner() {
   </div>
 
   <div class="card quiz-card">
-    <div class="qhead">
+    ${(() => {
+      // 当前这道题可拖进右侧 AI 咨询
+      const d = dnd({
+        title: `第 ${qlState.quizIndex + 1} 题：${String(q.stem || '').slice(0, 60)}`,
+        source: [q.source, q.location].filter(Boolean).join(' · ') || '练习题',
+        text: [
+          `题干：${q.stem || ''}`,
+          arr(q.options).length ? `选项：\n${q.options.join('\n')}` : '',
+          q.answer ? `参考答案：${q.answer}` : '',
+          q.explanation ? `解析：${q.explanation}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
+      return `<div class="qhead" ${d.attrs}>
       <span class="qnum">第 ${qlState.quizIndex + 1} 题</span>
       ${q.type ? `<span class="tag type">${esc(q.type)}</span>` : ''}
       ${q.difficulty ? `<span class="tag">${esc(q.difficulty)}</span>` : ''}
       ${q.source ? `<span class="tag ${q.source === '课件原题' ? 'src' : ''}">${esc(q.source)}</span>` : ''}
       ${q.location ? `<span class="tag">${icon('pin', 11)}${esc(q.location)}</span>` : ''}
-    </div>
+      ${d.btn}
+    </div>`;
+    })()}
 
     <div class="qstem">${esc(q.stem)}</div>
 

@@ -1235,6 +1235,14 @@ app.listen(PORT, HOST, () => {
       if (n) console.log(`  已为 ${n} 个老项目补齐文件角色与页面截图\n`);
     })
     .catch((err) => console.warn('  补齐老项目时出错：' + err.message));
+
+  // 回收站里超过 30 天的条目清掉（删除项目是软删除，先放 data/trash/）
+  import('./store.mjs')
+    .then(({ sweepTrash }) => {
+      const n = sweepTrash();
+      if (n) console.log(`  回收站清理：删除 ${n} 个超过 30 天的旧条目\n`);
+    })
+    .catch((err) => console.warn('  回收站清理出错：' + err.message));
 });
 
 export { app, fixName };

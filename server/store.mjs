@@ -8,6 +8,15 @@ import { classifyRole, projectShape, roleLabel } from './roles.mjs';
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
+/**
+ * 回收站：删除项目时不真的删，而是把 JSON 和 media 目录移到这里。
+ * 误删项目 = 丢掉几十分钟的生成结果，代价太高，所以一律软删除。
+ * 超过 TRASH_TTL_DAYS 天的才在启动时清掉。
+ */
+export const TRASH_DIR = path.join(DATA_DIR, 'trash');
+fs.mkdirSync(TRASH_DIR, { recursive: true });
+export const TRASH_TTL_DAYS = 30;
+
 const projects = new Map();
 
 function cacheFile(id) {
@@ -147,12 +156,97 @@ export function persist(project) {
   return project;
 }
 
+/**
+ * 删除项目 —— 软删除，先挪进 data/trash/，可人工恢复。
+ *
+ * 用一个带时间戳的子目录把所有相关文件放一起，恢复时直接搬回去就行：
+ *   data/trash/<id>-<时间戳>/project.json
+ *   data/trash/<id>-<时间戳>/media/...
+ *
+ * 设 CW_HARD_DELETE=1 才会真的抹掉（给确实需要腾磁盘的场景用）。
+ */
 export function deleteProject(id) {
+  const project = projects.get(id);
   projects.delete(id);
+
   const f = cacheFile(id);
-  if (fs.existsSync(f)) fs.unlinkSync(f);
   const mediaDir = path.join(MEDIA_DIR, id);
-  if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
+  const hard = process.env.CW_HARD_DELETE === '1';
+
+  if (hard) {
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+    if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
+    return;
+  }
+
+  if (!fs.existsSync(f) && !fs.existsSync(mediaDir)) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = path.join(TRASH_DIR, `${id}-${stamp}`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(f)) fs.renameSync(f, path.join(dir, 'project.json'));
+    if (fs.existsSync(mediaDir)) fs.renameSync(mediaDir, path.join(dir, 'media'));
+    // 记一下它叫什么、有多少文件，方便人工挑拣着恢复
+    fs.writeFileSync(
+      path.join(dir, 'README.txt'),
+      [
+        `项目 id：${id}`,
+        `项目名：${project?.name || '(未知，删除时不在内存里)'}`,
+        `删除时间：${new Date().toISOString()}`,
+        '',
+        '恢复方法：',
+        `  mv project.json ../../cache/${id}.json`,
+        `  mv media ../../media/${id}`,
+        '',
+        `超过 ${TRASH_TTL_DAYS} 天会被启动时的清理任务删掉。`,
+      ].join('\n'),
+      'utf8',
+    );
+  } catch (err) {
+    // 挪不动就退回真删，别让删除操作卡住
+    console.error('[trash] 移入回收站失败，改为直接删除：', err.message);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+    if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
+  }
+}
+
+/** 清理回收站里超过 TTL 的条目（启动时调用一次） */
+export function sweepTrash(ttlDays = TRASH_TTL_DAYS) {
+  if (!fs.existsSync(TRASH_DIR)) return 0;
+  const cutoff = Date.now() - ttlDays * 24 * 3600 * 1000;
+  let n = 0;
+  for (const name of fs.readdirSync(TRASH_DIR)) {
+    const p = path.join(TRASH_DIR, name);
+    try {
+      const st = fs.statSync(p);
+      if (st.mtimeMs < cutoff) {
+        fs.rmSync(p, { recursive: true, force: true });
+        n++;
+      }
+    } catch {
+      /* 单个失败不影响其他 */
+    }
+  }
+  return n;
+}
+
+/** 列出回收站内容（给需要人工恢复时看的） */
+export function listTrash() {
+  if (!fs.existsSync(TRASH_DIR)) return [];
+  return fs
+    .readdirSync(TRASH_DIR)
+    .map((name) => {
+      const p = path.join(TRASH_DIR, name);
+      let name2 = '';
+      try {
+        const txt = fs.readFileSync(path.join(p, 'README.txt'), 'utf8');
+        name2 = (txt.match(/项目名：(.*)/) || [])[1] || '';
+      } catch {
+        /* 忽略 */
+      }
+      return { dir: name, path: p, name: name2, mtime: fs.statSync(p).mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
 }
 
 /** 遍历所有项目（启动补齐数据用） */
