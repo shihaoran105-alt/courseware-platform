@@ -31,11 +31,21 @@ import {
   slimProject,
 } from './store.mjs';
 import { QUOTAS, addBytes, checkRate, overStorage, sessionMiddleware, sweepSessions } from './session.mjs';
+import {
+  canEditGroup,
+  createGroup,
+  deleteGroup,
+  getGroup,
+  groupExists,
+  listGroups,
+  renameGroup,
+} from './groups.mjs';
 import { ACCEPT_HINT, classify, extractFile, fileToText } from './extract/index.mjs';
 import {
   runFullAnalysis,
   rerunStage,
   askQuestion,
+  dockAsk,
   gradeAnswer,
   checkLab,
   explainQuestion,
@@ -241,13 +251,80 @@ app.post('/api/projects', (req, res) => {
     res.status(429).json({ error: `最多只能建 ${QUOTAS.maxProjects} 个项目，请先删掉一些。` });
     return;
   }
-  const project = createProject((req.body?.name || '未命名课件').slice(0, 120), req.sid);
+  const groupId = String(req.body?.groupId || '');
+  if (!groupExists(groupId, req.sid)) {
+    res.status(404).json({ error: '这个项目组不存在' });
+    return;
+  }
+  const project = createProject((req.body?.name || '未命名课件').slice(0, 120), req.sid, { groupId });
   res.json(slim(req, project));
+});
+
+/* ------------------------------ 项目组 ------------------------------ */
+
+/** 一次拿全：所有组 + 所有项目（带 groupId），侧边栏一次渲染完 */
+app.get('/api/groups', (req, res) => {
+  res.json({ groups: listGroups(req.sid), projects: listProjects(req.sid) });
+});
+
+app.post('/api/groups', (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) {
+    res.status(400).json({ error: '请填写项目组名称，例如 EIE3333' });
+    return;
+  }
+  res.json({ group: createGroup(name, req.sid) });
+});
+
+app.patch('/api/groups/:id', (req, res) => {
+  const g = getGroup(req.params.id);
+  if (!g || !canEditGroup(g, req.sid)) {
+    res.status(404).json({ error: '项目组不存在' });
+    return;
+  }
+  res.json({ group: renameGroup(req.params.id, req.body?.name, req.sid) });
+});
+
+/** 删组不删项目：组里的项目退回「未分组」，分析结果都还在 */
+app.delete('/api/groups/:id', async (req, res) => {
+  const g = getGroup(req.params.id);
+  if (!g || !canEditGroup(g, req.sid)) {
+    res.status(404).json({ error: '项目组不存在' });
+    return;
+  }
+  deleteGroup(req.params.id, req.sid);
+  // 组里的项目退回「未分组」；分析结果一个都不动
+  const { forEachProject } = await import('./store.mjs');
+  forEachProject((p) => {
+    if ((p.owner || '') === (req.sid || '') && p.groupId === req.params.id) {
+      p.groupId = '';
+      persist(p);
+    }
+  });
+  res.json({ ok: true, groups: listGroups(req.sid), projects: listProjects(req.sid) });
 });
 
 app.get('/api/projects/:id', (req, res) => {
   const project = readableProjectOr404(req, res);
   if (!project) return;
+  res.json(slim(req, project));
+});
+
+/** 改项目名 / 把项目移到另一个组（groupId 传空字符串 = 移出分组） */
+app.patch('/api/projects/:id', (req, res) => {
+  const project = editableProjectOr404(req, res);
+  if (!project) return;
+  if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+    project.name = req.body.name.trim().slice(0, 120);
+  }
+  if (typeof req.body?.groupId === 'string') {
+    if (!groupExists(req.body.groupId, req.sid)) {
+      res.status(404).json({ error: '这个项目组不存在' });
+      return;
+    }
+    project.groupId = req.body.groupId;
+  }
+  persist(project);
   res.json(slim(req, project));
 });
 
@@ -901,6 +978,103 @@ app.delete('/api/projects/:id/chat', (req, res) => {
   project.chat = [];
   persist(project);
   res.json({ ok: true });
+});
+
+/* ---------------------- 右侧 AI 咨询（带拖入的上下文） ---------------------- */
+
+/**
+ * 和「课件问答」的区别：这里会把用户从界面上拖进来的内容块作为焦点，
+ * 对话历史单独存在 project.dockChat，两边互不干扰。
+ *
+ * 拖进来的块可能很多很大（整页讲解稿），所以对文本做总量与单项双重截断。
+ */
+const DOCK_MAX_ITEMS = 12;
+const DOCK_MAX_CHARS = 24000;
+
+function normalizeAttachments(raw) {
+  const list = Array.isArray(raw) ? raw.slice(0, DOCK_MAX_ITEMS) : [];
+  let budget = DOCK_MAX_CHARS;
+  const out = [];
+  for (const a of list) {
+    if (!a) continue;
+    const text = String(a.text || '').slice(0, 6000);
+    if (budget <= 0) break;
+    const clipped = text.slice(0, budget);
+    budget -= clipped.length;
+    out.push({
+      title: String(a.title || '').slice(0, 160),
+      source: String(a.source || '').slice(0, 160),
+      text: clipped,
+    });
+  }
+  return out;
+}
+
+app.post('/api/projects/:id/ask', async (req, res) => {
+  const project = editableProjectOr404(req, res);
+  if (!project) return;
+
+  const question = String(req.body?.question || '').trim().slice(0, 4000);
+  const attachments = normalizeAttachments(req.body?.attachments);
+  // 没内容也没问题就没得聊；只拖了内容不提问是允许的（AI 会主动讲解）
+  if (!question && !attachments.length) {
+    res.status(400).json({ error: '请先拖入要讨论的内容，或输入一个问题' });
+    return;
+  }
+  if (!rateLimitOr429(req, res, 'grade')) return;
+  const cfg = aiConfigOr401(req, res);
+  if (!cfg) return;
+
+  const stream = sse(res);
+  const controller = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) controller.abort();
+  });
+
+  project.dockChat = project.dockChat || [];
+  const history = project.dockChat.slice(-10);
+  let answer = '';
+  try {
+    const text = await dockAsk({
+      files: contextFor(project, cfg.maxInputChars),
+      cfg,
+      question,
+      attachments,
+      history,
+      signal: controller.signal,
+      onDelta: (d) => {
+        answer += d;
+        stream.send({ type: 'delta', text: d });
+      },
+    });
+    // 以返回值兜底，避免回调漏接导致回答为空
+    answer = text || answer;
+    if (!answer) throw new Error('模型没有返回内容，请重试');
+
+    project.dockChat.push({
+      role: 'user',
+      content: question,
+      attachments,
+      at: new Date().toISOString(),
+    });
+    project.dockChat.push({ role: 'assistant', content: answer, at: new Date().toISOString() });
+    project.dockChat = project.dockChat.slice(-80);
+    persist(project);
+    stream.send({ type: 'done' });
+  } catch (err) {
+    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
+    else stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+  } finally {
+    stream.close();
+  }
+});
+
+app.delete('/api/projects/:id/ask', (req, res) => {
+  const project = editableProjectOr404(req, res);
+  if (!project) return;
+  project.dockChat = [];
+  persist(project);
+  res.json({ ok: true, dockChat: [] });
 });
 
 /* -------------------------------- 导出 -------------------------------- */

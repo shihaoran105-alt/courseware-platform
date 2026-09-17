@@ -268,13 +268,19 @@ function explainPanel(q, entry) {
             ? `<div class="ex-section">
                 <h4>这道题用到的课件知识点</h4>
                 ${r.knowledgePoints
-                  .map(
-                    (k, i) => `<div class="kp-card">
+                  .map((k, i) => {
+                    const d = dnd({
+                      title: `知识点：${String(k.point || '').slice(0, 50)}`,
+                      source: `结合课件讲解 · ${q.stem ? q.stem.slice(0, 30) : ''}`,
+                      text: `知识点：${k.point || ''}\n课件原文：${k.coursewareSays || ''}\n用在本题：${k.howItApplies || ''}`,
+                    });
+                    return `<div class="kp-card" ${d.attrs}>
                     <div class="kp-top"><span class="kp-idx">${i + 1}</span><b>${esc(k.point)}</b></div>
                     <div class="kp-quote"><span class="kp-tag">课件原文</span>${esc(k.coursewareSays)}</div>
                     <div class="kp-apply"><span class="kp-tag">用在本题</span>${esc(k.howItApplies)}</div>
-                  </div>`,
-                  )
+                    ${d.btn}
+                  </div>`;
+                  })
                   .join('')}
               </div>`
             : ''
@@ -286,16 +292,22 @@ function explainPanel(q, entry) {
                 <h4>一步步解</h4>
                 <div class="steps">
                   ${r.walkthrough
-                    .map(
-                      (s, i) => `<div class="step">
+                    .map((s, i) => {
+                      const d = dnd({
+                        title: `第 ${s.step ?? i + 1} 步：${String(s.title || '').slice(0, 50)}`,
+                        source: '结合课件讲解 · 解题步骤',
+                        text: `第 ${s.step ?? i + 1} 步 ${s.title || ''}\n${s.detail || ''}\n${s.basedOn ? '依据：' + s.basedOn : ''}`,
+                      });
+                      return `<div class="step" ${d.attrs}>
                       <span class="dot">${esc(s.step ?? i + 1)}</span>
                       <div>
                         <h5>${esc(s.title)}</h5>
                         <p>${esc(s.detail)}</p>
                         ${s.basedOn ? `<div class="step-based">依据：${esc(s.basedOn)}</div>` : ''}
                       </div>
-                    </div>`,
-                    )
+                      ${d.btn}
+                    </div>`;
+                    })
                     .join('')}
                 </div>
               </div>`
@@ -663,10 +675,19 @@ function labInner() {
       <div class="bar"><i style="width:${pct}%"></i></div>
       <span>已完成 ${doneSteps.length}/${steps.length} 步（${pct}%）</span>
     </div>
-    ${arr(lab.objective).length ? `<div class="lab-block"><h5>${icon('target', 12)}实验目标</h5>${listHtml(lab.objective, '')}</div>` : ''}
-    ${lab.background ? `<div class="lab-block"><h5>${icon('book', 12)}原理</h5><p>${esc(lab.background)}</p></div>` : ''}
-    ${arr(lab.equipment).length ? `<div class="lab-block"><h5>${icon('clipboard', 12)}器材</h5><div class="pill-row">${lab.equipment.map((e) => `<span class="pill">${esc(e)}</span>`).join('')}</div></div>` : ''}
-    ${arr(lab.safety).length ? `<div class="note-box" style="margin-top:14px"><b>${icon('alert', 12)}注意事项</b>${listHtml(lab.safety, '')}</div>` : ''}
+    ${(() => {
+      // 实验的每一块（目标 / 原理 / 器材 / 注意事项）都能单独拖进 AI 咨询
+      const src = lab.title || `实验 ${qlState.labIndex + 1}`;
+      const dGoal = dnd({ title: '实验目标', source: src, text: arr(lab.objective).map((x) => '· ' + x).join('\n') });
+      const dBg = dnd({ title: '实验原理', source: src, text: lab.background || '' });
+      const dEq = dnd({ title: '实验器材', source: src, text: arr(lab.equipment).map((x) => '· ' + x).join('\n') });
+      const dSf = dnd({ title: '注意事项', source: src, text: arr(lab.safety).map((x) => '· ' + x).join('\n') });
+      return `
+    ${arr(lab.objective).length ? `<div class="lab-block" ${dGoal.attrs}><h5>${icon('target', 12)}实验目标</h5>${listHtml(lab.objective, '')}${dGoal.btn}</div>` : ''}
+    ${lab.background ? `<div class="lab-block" ${dBg.attrs}><h5>${icon('book', 12)}原理</h5><p>${esc(lab.background)}</p>${dBg.btn}</div>` : ''}
+    ${arr(lab.equipment).length ? `<div class="lab-block" ${dEq.attrs}><h5>${icon('clipboard', 12)}器材</h5><div class="pill-row">${lab.equipment.map((e) => `<span class="pill">${esc(e)}</span>`).join('')}</div>${dEq.btn}</div>` : ''}
+    ${arr(lab.safety).length ? `<div class="note-box" style="margin-top:14px" ${dSf.attrs}><b>${icon('alert', 12)}注意事项</b>${listHtml(lab.safety, '')}${dSf.btn}</div>` : ''}`;
+    })()}
   </div>
 
   ${
@@ -675,8 +696,20 @@ function labInner() {
           <h3><span class="num">${icon('list', 12)}</span>实验步骤　<span style="font-weight:400;color:var(--text-3);font-size:12.5px">做完一步勾一步</span></h3>
           <div class="lab-steps">
             ${steps
-              .map(
-                (s) => `<div class="lab-step ${doneSteps.includes(Number(s.no)) ? 'done' : ''}">
+              .map((s) => {
+                // 整个步骤块可拖进右侧 AI 咨询，方便问「这一步为什么这么做」
+                const d = dnd({
+                  title: `第 ${s.no} 步：${String(s.action || '').slice(0, 60)}`,
+                  source: `${lab.title || 'Lab'} · 实验步骤`,
+                  text: [
+                    `第 ${s.no} 步：${s.action || ''}`,
+                    s.expected ? `预期结果：${s.expected}` : '',
+                    s.tip ? `提示：${s.tip}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                });
+                return `<div class="lab-step ${doneSteps.includes(Number(s.no)) ? 'done' : ''}" ${d.attrs}>
                 <label class="step-check">
                   <input type="checkbox" name="labStep" value="${esc(s.no)}" ${doneSteps.includes(Number(s.no)) ? 'checked' : ''}>
                   <span class="step-no">${esc(s.no)}</span>
@@ -686,8 +719,9 @@ function labInner() {
                   ${s.expected ? `<div class="step-expected"><b>预期结果</b>${esc(s.expected)}</div>` : ''}
                   ${s.tip ? `<div class="step-tip"><b>提示</b>${esc(s.tip)}</div>` : ''}
                 </div>
-              </div>`,
-              )
+                ${d.btn}
+              </div>`;
+              })
               .join('')}
           </div>
         </div>`

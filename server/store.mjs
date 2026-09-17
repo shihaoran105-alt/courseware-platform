@@ -30,6 +30,8 @@ export function createProject(name = '未命名课件', owner = '', opts = {}) {
     id: newId(),
     name,
     owner,
+    // 属于哪个项目组（空 = 未分组）
+    groupId: opts.groupId || '',
     shared: Boolean(opts.shared),
     createdAt: now,
     updatedAt: now,
@@ -42,6 +44,8 @@ export function createProject(name = '未命名课件', owner = '', opts = {}) {
     labProgress: {},
     // 结合课件讲解：题目 id → { result, excerpt, at }
     explain: {},
+    // 右侧 AI 咨询的对话历史（和「课件问答」分开存）
+    dockChat: [],
   };
   projects.set(project.id, project);
   persist(project);
@@ -54,6 +58,8 @@ export function getProject(id) {
   if (fs.existsSync(file)) {
     try {
       const p = JSON.parse(fs.readFileSync(file, 'utf8'));
+      // 只有长得像项目的才收，防止别处的 JSON 被当项目塞进内存
+      if (!p || typeof p !== 'object' || !p.id || !Array.isArray(p.files)) return null;
       projects.set(p.id, p);
       return p;
     } catch {
@@ -95,6 +101,8 @@ export function listProjects(sid) {
     .map((p) => ({
       id: p.id,
       name: p.name,
+      // 属于哪个项目组（空 = 未分组）
+      groupId: p.groupId || '',
       shared: Boolean(p.shared),
       isMine: canEdit(p, sid),
       createdAt: p.createdAt,
@@ -102,6 +110,12 @@ export function listProjects(sid) {
       fileCount: p.files.length,
       hasAnalysis: Boolean(p.analysis),
       totalChars: p.files.reduce((n, f) => n + (f.chars || 0), 0),
+      // 侧边栏要显示每份材料齐不齐，顺手带上
+      roleCount: (p.files || []).reduce((m, f) => {
+        const r = f.role || classifyRole(f.originalName, f.kind);
+        m[r] = (m[r] || 0) + 1;
+        return m;
+      }, {}),
     }));
 }
 
@@ -151,6 +165,8 @@ export function loadAll() {
   if (!fs.existsSync(CACHE_DIR)) return;
   for (const name of fs.readdirSync(CACHE_DIR)) {
     if (!name.endsWith('.json')) continue;
+    // 下划线开头的是元数据文件（如分组表），不是项目，不能当项目加载
+    if (name.startsWith('_')) continue;
     const id = name.replace(/\.json$/, '');
     if (projects.has(id)) continue;
     getProject(id);
@@ -171,6 +187,7 @@ export function slimProject(project, sid = '') {
   return {
     id: project.id,
     name: project.name,
+    groupId: project.groupId || '',
     shared: Boolean(project.shared),
     isMine: canEdit(project, sid),
     createdAt: project.createdAt,
@@ -181,6 +198,8 @@ export function slimProject(project, sid = '') {
     attempts: project.attempts || {},
     labProgress: project.labProgress || {},
     explain: project.explain || {},
+    dockChat: project.dockChat || [],
+    aiChat: project.chat || [],
     shape: projectShape(project.files || []),
     files: project.files.map((f) => ({
       id: f.id,

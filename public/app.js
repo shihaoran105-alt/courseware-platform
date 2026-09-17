@@ -12,7 +12,13 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 /* 访客自己的 API 配置只存在浏览器 localStorage，随请求发给服务器用完即弃 */
-const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', provider: 'cw_api_provider' };
+const LS = {
+  key: 'cw_api_key',
+  base: 'cw_api_base',
+  model: 'cw_api_model',
+  provider: 'cw_api_provider',
+  lastProject: 'cw_last_project',
+};
 const lsGet = (k) => {
   try {
     return localStorage.getItem(k) || '';
@@ -43,6 +49,12 @@ const state = {
   apiModel: lsGet(LS.model),
   providerId: lsGet(LS.provider) || 'deepseek',
   gateOpen: false,
+  // 项目组
+  groups: [],
+  projects: [],
+  collapsedGroups: new Set(),
+  // 右侧 AI 咨询
+  dock: { open: true, attachments: [], sending: false },
 };
 
 /** 服务器是否必须让访客自带 Key */
@@ -309,18 +321,18 @@ async function init() {
   } catch {
     /* 忽略 */
   }
+  // 记一下上次打开的项目，刷新后还回到那里
+  await loadWorkspace();
+  const lastId = lsGet(LS.lastProject);
+  const pick = state.projects.find((p) => p.id === lastId) || state.projects.find((p) => p.isMine) || state.projects[0];
   try {
-    const { projects } = await api('/api/projects');
-    if (projects?.length) {
-      // 优先打开自己的项目；公共部署里把演示项目排前面只用于「先看看」
-      const mine = projects.find((p) => p.isMine);
-      state.project = await api(`/api/projects/${(mine || projects[0]).id}`);
-    }
+    if (pick) state.project = await api(`/api/projects/${pick.id}`);
   } catch {
     /* 忽略 */
   }
   if (!state.project) {
     state.project = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: '未命名课件' }) });
+    await loadWorkspace();
   }
   syncView();
   render();
@@ -432,10 +444,525 @@ const TABS = [
   { id: 'chat', label: '课件问答', icon: 'chat' },
 ];
 
+/* ==================== 可拖拽内容块 + 右侧 AI 咨询 ==================== */
+
+/**
+ * 拖拽登记表。
+ * 不把正文写进 DOM 属性（太长、还有转义问题），只发一个短 key，
+ * 真正的内容存在这里，拖放时按 key 取。
+ */
+const dndStore = new Map();
+let dndSeq = 0;
+
+/**
+ * 把一个内容块登记成可拖拽 + 可点击加入的。
+ *
+ *   const d = dnd({ title:'第 3 步', source:'Lab 4', text: s.action });
+ *   `<div ${d.attrs}>…${d.btn}</div>`
+ *
+ * 用法必须成对：attrs 给容器，btn 给那个 ⊕ 按钮。
+ */
+function dnd(payload) {
+  // 元素被替换后旧 key 就没用了，留一个上限兜底，避免长时间不刷新时无限增长
+  if (dndStore.size > 2000) dndStore.clear();
+  const key = 'd' + ++dndSeq;
+  dndStore.set(key, {
+    title: String(payload.title || '未命名内容').slice(0, 200),
+    source: String(payload.source || '').slice(0, 200),
+    text: String(payload.text || '').slice(0, 8000),
+  });
+  return {
+    key,
+    attrs: `draggable="true" data-drag="${key}"`,
+    btn: `<button class="dnd-add" data-dragadd="${key}" title="加入右侧 AI 咨询">${icon('plus', 12)}</button>`,
+  };
+}
+
+/** 拖拽时给个统一的「内容块」外观 */
+function wireDndRoot(root) {
+  if (!root) return;
+  root.addEventListener('dragstart', (e) => {
+    const el = e.target.closest?.('[data-drag]');
+    if (!el) return;
+    const key = el.dataset.drag;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-cw-block', key);
+    e.dataTransfer.setData('text/plain', dndStore.get(key)?.title || '');
+    el.classList.add('dragging');
+    dockHighlight(true);
+  });
+  root.addEventListener('dragend', (e) => {
+    e.target.closest?.('[data-drag]')?.classList.remove('dragging');
+    dockHighlight(false);
+  });
+  // 点 ⊕ 也能加入，比拖拽更好发现（触屏和触控板用户友好）
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dragadd]');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    addAttachment(b.dataset.dragadd);
+  });
+}
+
+/** 把某个 key 对应的内容块加进待提问列表 */
+function addAttachment(key) {
+  const item = dndStore.get(key);
+  if (!item) return;
+  const dup = state.dock.attachments.find((a) => a.key === key);
+  if (dup) {
+    toast('这块内容已经在对话里了');
+    return;
+  }
+  state.dock.attachments.push({ ...item, key });
+  state.dock.open = true;
+  renderDock();
+  $('#dockInput')?.focus();
+  toast(`已加入「${item.title}」`);
+}
+
+function removeAttachment(key) {
+  state.dock.attachments = state.dock.attachments.filter((a) => a.key !== key);
+  renderDock();
+}
+
+function dockHighlight(on) {
+  $('#aiDock')?.classList.toggle('drop-target', Boolean(on));
+}
+
+function renderDock() {
+  const dock = $('#aiDock');
+  if (!dock) return;
+  dock.classList.toggle('collapsed', !state.dock.open);
+
+  const ctx = $('#dockCtx');
+  if (ctx) {
+    const list = state.dock.attachments;
+    ctx.innerHTML = list.length
+      ? list
+          .map(
+            (a) => `<span class="ctx-chip" title="${esc(a.source ? a.source + ' · ' : '')}${esc(a.text.slice(0, 300))}">
+              <b>${esc(a.title)}</b>
+              <button class="ctx-x" data-ctxdel="${esc(a.key)}" title="移出">${icon('x', 11)}</button>
+            </span>`,
+          )
+          .join('') + `<button class="ctx-clear" id="ctxClear">全部移出</button>`
+      : '<span class="ctx-empty">把左边任意内容拖进来（或点它旁边的 ＋）</span>';
+  }
+
+  const msgs = $('#dockMsgs');
+  if (msgs) {
+    const list = arr(state.project?.dockChat);
+    msgs.innerHTML = list.length
+      ? list.map(dockMsgHtml).join('')
+      : `<div class="dock-welcome">
+          <p><b>这里可以就任何一块内容追问。</b></p>
+          <ul>
+            <li>把<b>实验步骤</b>拖进来 → 问「这一步为什么这么做」</li>
+            <li>把<b>某道题</b>拖进来 → 问「换个条件还成立吗」</li>
+            <li>把<b>一页讲解稿</b>拖进来 → 问「这段怎么讲更清楚」</li>
+          </ul>
+          <p class="dock-welcome-tip">只把内容拖进来、不提问也行，AI 会主动讲解这一块。</p>
+        </div>`;
+  }
+
+  const send = $('#dockSend');
+  if (send) {
+    send.disabled = state.dock.sending || (!state.dock.attachments.length && !$('#dockInput')?.value.trim());
+    send.innerHTML = state.dock.sending ? SPIN_SVG + '思考中' : icon('send', 13) + '发送';
+  }
+  scrollDock();
+}
+
+function dockMsgHtml(m) {
+  const isUser = m.role === 'user';
+  const atts = arr(m.attachments);
+  return `<div class="dock-msg ${isUser ? 'user' : 'ai'}">
+    ${atts.length ? `<div class="dock-msg-atts">${atts.map((a) => `<span class="att-tag">${icon('quote', 10)}${esc(a.title)}</span>`).join('')}</div>` : ''}
+    ${m.content ? `<div class="dock-bubble">${isUser ? esc(m.content) : mdToHtml(m.content)}</div>` : ''}
+  </div>`;
+}
+
+function scrollDock() {
+  const el = $('#dockMsgs');
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function dockReset() {
+  state.dock.attachments = [];
+  state.dock.sending = false;
+  dndStore.clear();
+  renderDock();
+}
+
+async function dockSend() {
+  if (state.dock.sending) return;
+  const input = $('#dockInput');
+  const question = (input?.value || '').trim();
+  const attachments = state.dock.attachments.map((a) => ({ title: a.title, source: a.source, text: a.text }));
+  if (!question && !attachments.length) {
+    toast('先拖入内容或输入问题', 'err');
+    return;
+  }
+  if (!state.project?.id) return;
+  if (keyRequired() && !state.apiKey) {
+    openGate('需要 API Key 才能提问');
+    return;
+  }
+
+  state.dock.sending = true;
+  // 先把用户这条和一条空的 AI 气泡放进本地列表，做出「立刻有反应」的效果
+  const local = arr(state.project.dockChat);
+  local.push({ role: 'user', content: question, attachments, at: new Date().toISOString() });
+  local.push({ role: 'assistant', content: '', streaming: true, at: new Date().toISOString() });
+  state.project.dockChat = local;
+  state.dock.attachments = [];
+  if (input) input.value = '';
+  renderDock();
+
+  const bump = () => {
+    const box = $('#dockMsgs .dock-msg:last-child .dock-bubble');
+    if (box) {
+      box.innerHTML = mdToHtml(local[local.length - 1].content);
+      scrollDock();
+    }
+  };
+
+  try {
+    let acc = '';
+    await postSSE(`/api/projects/${state.project.id}/ask`, { question, attachments }, (e) => {
+      if (e.type === 'delta') {
+        acc += e.text || '';
+        local[local.length - 1].content = acc;
+        bump();
+      } else if (e.type === 'fatal') {
+        if (e.needsKey) openGate(e.message);
+        throw new Error(e.message || '回答失败');
+      }
+    });
+    if (!local[local.length - 1].content) throw new Error('模型没有返回内容，请重试');
+    delete local[local.length - 1].streaming;
+    state.dock.sending = false;
+    renderDock();
+  } catch (err) {
+    state.dock.sending = false;
+    local.pop(); // 去掉那条空的 AI 气泡
+    local.pop(); // 用户那条也退回输入框，避免内容丢了
+    if (input) input.value = question;
+    state.dock.attachments = attachments.map((a, i) => ({ ...a, key: 'retry' + i }));
+    renderDock();
+    toast(err.message, 'err');
+  }
+}
+
+function wireDock() {
+  const dock = $('#aiDock');
+  if (!dock) return;
+  fillDockIcons();
+
+  $('#dockToggle')?.addEventListener('click', () => {
+    state.dock.open = !state.dock.open;
+    renderDock();
+  });
+  $('#dockClear')?.addEventListener('click', async () => {
+    if (!arr(state.project?.dockChat).length) return;
+    const ok = await confirmBox({ title: '清空 AI 咨询的对话？', body: '不影响「课件问答」里的记录，也不会动生成好的讲解内容。', okText: '清空' });
+    if (!ok) return;
+    try {
+      await api(`/api/projects/${state.project.id}/ask`, { method: 'DELETE' });
+      state.project.dockChat = [];
+      renderDock();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+  $('#dockSend')?.addEventListener('click', dockSend);
+
+  const input = $('#dockInput');
+  input?.addEventListener('input', () => {
+    const s = $('#dockSend');
+    if (s) s.disabled = state.dock.sending || (!state.dock.attachments.length && !input.value.trim());
+  });
+  input?.addEventListener('keydown', (e) => {
+    // Enter 发送，Shift+Enter 换行
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      dockSend();
+    }
+  });
+
+  $('#dockCtx')?.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-ctxdel]');
+    if (del) {
+      removeAttachment(del.dataset.ctxdel);
+      return;
+    }
+    if (e.target.closest('#ctxClear')) {
+      state.dock.attachments = [];
+      renderDock();
+    }
+  });
+
+  // 投放：整个 dock 都是放置区，拖进来就加入
+  const over = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    dockHighlight(true);
+  };
+  ['dragenter', 'dragover'].forEach((t) => dock.addEventListener(t, over));
+  dock.addEventListener('dragleave', (e) => {
+    if (!dock.contains(e.relatedTarget)) dockHighlight(false);
+  });
+  dock.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dockHighlight(false);
+    const key = e.dataTransfer.getData('application/x-cw-block');
+    if (key) {
+      addAttachment(key);
+      return;
+    }
+    // 从桌面直接拖文件进 dock 也支持
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
+  });
+}
+
+function fillDockIcons() {
+  const t = $('#dockToggle');
+  if (t) t.innerHTML = icon(state.dock.open ? 'right' : 'left', 13);
+  const c = $('#dockClear');
+  if (c) c.innerHTML = icon('trash', 13);
+}
+
+/** 拖拽监听只挂一次（挂在持久容器上，内部 innerHTML 被替换也不影响） */
+function ensureDndWiring() {
+  const body = $('#tabBody');
+  if (body && !body.dataset.dndWired) {
+    body.dataset.dndWired = '1';
+    wireDndRoot(body);
+  }
+}
+
 function render() {
+  renderGroups();
   renderSidebar();
   renderTabs();
   renderBody();
+  renderDock();
+  ensureDndWiring();
+}
+
+/* ==================== 项目组：EIE3333 → Lecture 1 / Tut 1 / Lab 1 ==================== */
+
+/** 拉一次「所有组 + 所有项目」，侧边栏一次渲染完 */
+async function loadWorkspace() {
+  try {
+    const r = await api('/api/groups');
+    state.groups = arr(r.groups);
+    state.projects = arr(r.projects);
+  } catch {
+    // 静态版或接口不可用时退化成只有项目列表
+    try {
+      const { projects } = await api('/api/projects');
+      state.groups = [];
+      state.projects = arr(projects);
+    } catch {
+      state.groups = [];
+      state.projects = [];
+    }
+  }
+}
+
+/** 现在这个项目属于哪个组 */
+function currentGroupId() {
+  return state.project?.groupId || '';
+}
+
+function renderGroups() {
+  const el = $('#groupList');
+  if (!el) return;
+  const projects = state.projects;
+  const byGroup = new Map();
+  for (const p of projects) {
+    const k = p.groupId || '';
+    if (!byGroup.has(k)) byGroup.set(k, []);
+    byGroup.get(k).push(p);
+  }
+
+  const projRow = (p) => {
+    const active = p.id === state.project?.id;
+    const marks = [];
+    if (p.hasAnalysis) marks.push('<span class="pm ok" title="已生成讲解">已生成</span>');
+    else if (p.fileCount) marks.push('<span class="pm">待分析</span>');
+    if (p.roleCount?.lab) marks.push('<span class="pm lab" title="含实验指导">Lab</span>');
+    if (p.roleCount?.solution) marks.push('<span class="pm sol" title="含标准答案">答案</span>');
+    return `<div class="proj ${active ? 'active' : ''}" data-proj="${esc(p.id)}" title="${esc(p.name)}">
+      <span class="proj-name">${esc(p.name)}</span>
+      <span class="proj-marks">${marks.join('')}</span>
+    </div>`;
+  };
+
+  const groupBlock = (g) => {
+    const list = byGroup.get(g.id) || [];
+    const open = !state.collapsedGroups.has(g.id);
+    return `<div class="group" data-group="${esc(g.id)}">
+      <div class="group-head ${open ? 'open' : ''}">
+        <button class="group-toggle ${open ? 'open' : ''}" data-gact="toggle" data-id="${esc(g.id)}" title="${open ? '收起' : '展开'}">${icon('right', 12)}</button>
+        <span class="group-name" data-gact="rename" data-id="${esc(g.id)}" title="点两下改名">${esc(g.name)}</span>
+        <span class="group-count">${list.length}</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" data-gact="add" data-id="${esc(g.id)}" title="在这个组里新建项目">${icon('plus', 13)}</button>
+        <button class="icon-btn danger" data-gact="del" data-id="${esc(g.id)}" title="删除分组（里面的项目会退回未分组，不会被删）">${icon('x', 13)}</button>
+      </div>
+      ${open ? `<div class="group-projects">${list.length ? list.map(projRow).join('') : '<div class="proj-empty">这个组还没有项目</div>'}</div>` : ''}
+    </div>`;
+  };
+
+  const ungrouped = byGroup.get('') || [];
+  el.innerHTML =
+    state.groups.map(groupBlock).join('') +
+    (ungrouped.length || !state.groups.length
+      ? `<div class="group" data-group="">
+          <div class="group-head open">
+            <span class="group-toggle" style="visibility:hidden"></span>
+            <span class="group-name" style="cursor:default">未分组</span>
+            <span class="group-count">${ungrouped.length}</span>
+          </div>
+          <div class="group-projects">${ungrouped.length ? ungrouped.map(projRow).join('') : '<div class="proj-empty">还没有项目</div>'}</div>
+        </div>`
+      : '');
+}
+
+/** 切到另一个项目：它自己保存的文件 / 分析 / 做题记录 / Lab 进度 / 对话都会一起回来 */
+async function switchProject(id) {
+  if (!id || id === state.project?.id) return;
+  try {
+    state.project = await api(`/api/projects/${id}`);
+    lsSet(LS.lastProject, id);
+    state.tab = 'overview';
+    state.presenter.index = 0;
+    dockReset();
+    syncView();
+    render();
+    const p = state.projects.find((x) => x.id === id);
+    toast(`已切到「${p?.name || '项目'}」`);
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+/** 「新建」按钮：有分组时问一下建到哪个组 */
+async function newProjectUI(forceGroupId) {
+  let groupId = forceGroupId;
+  if (groupId === undefined) {
+    // 当前项目在某个组里 → 默认建到同一个组，符合「在这个组里继续加 lecture/tut/lab」的习惯
+    groupId = currentGroupId();
+  }
+  try {
+    const name = await promptText({
+      title: '新建项目',
+      label: '项目名称',
+      placeholder: '例如 Lecture 1 / Tut 1 / Lab 1',
+      value: '',
+      hint: groupId ? `会放进「${groupName(groupId)}」` : '会放在「未分组」里',
+    });
+    if (name === null) return null;
+    const p = await api('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({ name: name.trim() || '未命名课件', groupId }),
+    });
+    await loadWorkspace();
+    state.project = p;
+    state.tab = 'overview';
+    dockReset();
+    syncView();
+    render();
+    toast(`已新建「${p.name}」`);
+    return p;
+  } catch (err) {
+    toast(err.message, 'err');
+    return null;
+  }
+}
+
+function groupName(id) {
+  return state.groups.find((g) => g.id === id)?.name || '未分组';
+}
+
+async function newGroupUI() {
+  try {
+    const name = await promptText({
+      title: '新建项目组',
+      label: '组名',
+      placeholder: '例如 EIE3333',
+      hint: '一个组里可以放 Lecture 1 / Tut 1 / Lab 1 等多个项目',
+    });
+    if (name === null || !name.trim()) return;
+    const { group } = await api('/api/groups', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    state.collapsedGroups.delete(group.id);
+    await loadWorkspace();
+    renderGroups();
+    toast(`已新建项目组「${group.name}」，点组右边的 ＋ 往里面加项目`);
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function renameGroupUI(id) {
+  const cur = groupName(id);
+  const name = await promptText({ title: '重命名项目组', label: '组名', value: cur });
+  if (name === null || !name.trim() || name.trim() === cur) return;
+  try {
+    await api(`/api/groups/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) });
+    await loadWorkspace();
+    renderGroups();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function deleteGroupUI(id) {
+  const n = state.projects.filter((p) => p.groupId === id).length;
+  const ok = await confirmBox({
+    title: `删除项目组「${groupName(id)}」？`,
+    body: n
+      ? `组里的 <b>${n} 个项目不会被删除</b>，只会退回「未分组」，生成好的内容都还在。`
+      : '这个组里还没有项目。',
+    okText: '删除分组',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/groups/${id}`, { method: 'DELETE' });
+    await loadWorkspace();
+    renderGroups();
+    toast('分组已删除，项目都还在');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+function wireGroups() {
+  const el = $('#groupList');
+  if (!el) return;
+  el.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-gact]');
+    if (act) {
+      const id = act.dataset.id;
+      if (act.dataset.gact === 'toggle') {
+        state.collapsedGroups.has(id) ? state.collapsedGroups.delete(id) : state.collapsedGroups.add(id);
+        renderGroups();
+      } else if (act.dataset.gact === 'add') newProjectUI(id);
+      else if (act.dataset.gact === 'rename') renameGroupUI(id);
+      else if (act.dataset.gact === 'del') deleteGroupUI(id);
+      return;
+    }
+    const proj = e.target.closest('[data-proj]');
+    if (proj) switchProject(proj.dataset.proj);
+  });
+  // 双击组名改名
+  el.addEventListener('dblclick', (e) => {
+    const name = e.target.closest('.group-name[data-gact]');
+    if (name) renameGroupUI(name.dataset.id);
+  });
 }
 
 function renderSidebar() {
@@ -495,6 +1022,8 @@ function renderTabs() {
 }
 
 function renderBody() {
+  // 正文要被整体替换，上一轮登记的拖拽 key 全部作废
+  dndStore.clear();
   const body = $('#tabBody');
   if (state.view === 'empty') {
     body.innerHTML = `
@@ -687,13 +1216,20 @@ function renderOverview(an) {
     ? `<div class="card">
         <h3><span class="num">4</span>核心概念</h3>
         ${an.concepts
-          .map(
-            (c) => `<div class="concept">
+          .map((c) => {
+            // 每个概念可拖进右侧 AI 咨询追问
+            const d = dnd({
+              title: `概念：${String(c.term || '').slice(0, 50)}`,
+              source: '课件分析 · 核心概念',
+              text: `${c.term || ''}：${c.definition || ''}${c.why ? `\n难点：${c.why}` : ''}`,
+            });
+            return `<div class="concept" ${d.attrs}>
             <b>${esc(c.term)}</b>
             <p>${esc(c.definition)}</p>
             ${c.why ? `<div class="why">${icon('alert', 12)} ${esc(c.why)}</div>` : ''}
-          </div>`,
-          )
+            ${d.btn}
+          </div>`;
+          })
           .join('')}
       </div>`
     : '';
@@ -745,13 +1281,29 @@ function renderCombine() {
   const cards = qs
     .map((q, i) => {
       const has = Boolean(explainOf(q.id));
+      // 整道题可拖进右侧 AI 咨询
+      const d = dnd({
+        title: `第 ${i + 1} 题：${String(q.stem || '').slice(0, 60)}`,
+        source: [q.source, q.location].filter(Boolean).join(' · ') || '练习题',
+        text: [
+          `题干：${q.stem || ''}`,
+          arr(q.options).length ? `选项：\n${q.options.join('\n')}` : '',
+          q.answer ? `参考答案：${q.answer}` : '',
+          q.explanation ? `解析：${q.explanation}` : '',
+          arr(q.keyPoints).length ? `评分要点：${q.keyPoints.join('；')}` : '',
+          arr(q.pitfalls).length ? `易错点：${q.pitfalls.join('；')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
       return `<div class="card" data-qcard="${esc(q.id)}">
-        <div class="qhead">
+        <div class="qhead" ${d.attrs}>
           <span class="qnum">第 ${i + 1} 题</span>
           ${q.type ? `<span class="tag type">${esc(q.type)}</span>` : ''}
           ${q.difficulty ? `<span class="tag">${esc(q.difficulty)}</span>` : ''}
           ${q.source ? `<span class="tag ${q.source === '课件原题' ? 'src' : ''}">${esc(q.source)}</span>` : ''}
           ${q.location ? `<span class="tag">${icon('pin', 11)}${esc(q.location)}</span>` : ''}
+          ${d.btn}
         </div>
         <div class="qstem">${esc(q.stem)}</div>
         ${arr(q.options).length ? `<div class="qopts">${q.options.map((o) => `<div class="option-row" style="cursor:default"><span>${esc(o)}</span></div>`).join('')}</div>` : ''}
@@ -856,9 +1408,26 @@ function renderExamples(ex) {
       <p style="margin:0;color:var(--text-2);font-size:13.5px">每个事例都拆成了「题目 → 分步讲解 → 通用方法 → 易错点 → 板书」，可以直接照着讲。</p>
     </div>` +
     examples
-      .map(
-        (e, i) => `
-    <div class="example">
+      .map((e, i) => {
+        // 整个事例可拖进右侧 AI 咨询
+        const d = dnd({
+          title: `事例 ${e.id ?? i + 1}：${String(e.title || '').slice(0, 50)}`,
+          source: ['事例讲解', e.location].filter(Boolean).join(' · '),
+          text: [
+            e.title ? `标题：${e.title}` : '',
+            e.context ? `情境：${e.context}` : '',
+            e.stem ? `题目：${e.stem}` : '',
+            arr(e.steps).length ? `讲解步骤：\n${e.steps.map((s, si) => `${si + 1}. ${s.title}：${s.detail}`).join('\n')}` : '',
+            e.method ? `通用方法：${e.method}` : '',
+            e.answer ? `答案：${e.answer}` : '',
+            arr(e.keyPoints).length ? `关键点：${e.keyPoints.join('；')}` : '',
+            arr(e.pitfalls).length ? `易错点：${e.pitfalls.join('；')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        return `
+    <div class="example" ${d.attrs}>
       <div class="example-head">
         <span class="idx">${esc(e.id ?? i + 1)}</span>
         <div style="flex:1">
@@ -868,6 +1437,7 @@ function renderExamples(ex) {
             ${e.location ? `<span class="tag">${icon('pin', 11)}${esc(e.location)}</span>` : ''}
           </div>
         </div>
+        ${d.btn}
       </div>
       <div class="example-body">
         ${e.context ? `<p style="margin:0 0 12px;color:var(--text-2);font-size:13px">${esc(e.context)}</p>` : ''}
@@ -890,8 +1460,8 @@ function renderExamples(ex) {
         ${arr(e.pitfalls).length ? `<div class="note-box"><b>易错点</b>${listHtml(e.pitfalls, '')}</div>` : ''}
         ${e.board ? `<div class="board-box"><span class="lbl">板书</span>${esc(e.board)}</div>` : ''}
       </div>
-    </div>`,
-      )
+    </div>`;
+      })
       .join('')
   );
 }
@@ -1060,8 +1630,23 @@ function renderNarration(n) {
       <div style="margin-top:18px"><button class="btn primary" id="startPresent">${icon('play', 14)}进入全屏讲解</button></div>
     </div>
     ${segs
-      .map(
-        (s, i) => `<div class="card">
+      .map((s, i) => {
+        // 整页讲解稿可拖进右侧 AI 咨询
+        const d = dnd({
+          title: s.location || `第 ${i + 1} 页`,
+          source: `逐页讲解${s.fromVideo ? ' · 录像原话' : s.aiFilled ? ' · AI 补写' : ''}`,
+          text: [
+            s.title ? `标题：${s.title}` : '',
+            s.scriptEn ? `英文原话：${s.scriptEn}` : '',
+            `讲解稿：${s.script || ''}`,
+            arr(s.keyPoints).length ? `要点：${s.keyPoints.join('；')}` : '',
+            s.askClass ? `提问：${s.askClass}` : '',
+            s.board ? `板书：${s.board}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        return `<div class="card" ${d.attrs}>
         <h3><span class="num">${i + 1}</span>${esc(s.location || `第 ${i + 1} 页`)}　<span style="font-weight:500;color:var(--ink-2)">${esc(s.title || '')}</span>
           ${s.aiFilled ? '<span class="tag type">AI 补写</span>' : ''}
           ${s.fromVideo ? '<span class="tag src">录像原话</span>' : ''}
@@ -1079,8 +1664,9 @@ function renderNarration(n) {
             ${s.transition ? `<p style="margin:12px 0 0;color:var(--ink-3);font-size:12.5px;font-style:italic">过渡：${esc(s.transition)}</p>` : ''}
           </div>
         </div>
-      </div>`,
-      )
+        ${d.btn}
+      </div>`;
+      })
       .join('')}`;
 }
 
@@ -1556,6 +2142,67 @@ function closeModal() {
   state.gateOpen = false;
 }
 
+/**
+ * 轻量输入框（代替原生 prompt —— 原生 prompt 不能带说明文字，样式也突兀）。
+ * 返回 Promise<string|null>，取消时 resolve(null)。
+ */
+function promptText({ title = '请输入', label = '', value = '', placeholder = '', hint = '' } = {}) {
+  return new Promise((resolve) => {
+    openModal(
+      `<h3>${esc(title)}</h3>
+       ${label ? `<label class="field-label">${esc(label)}</label>` : ''}
+       <input type="text" id="promptInput" class="text-input" value="${esc(value)}" placeholder="${esc(placeholder)}">
+       ${hint ? `<p class="prompt-hint">${esc(hint)}</p>` : ''}
+       <div class="modal-actions">
+         <button class="btn" data-close>取消</button>
+         <button class="btn primary" id="promptOk">确定</button>
+       </div>`,
+    );
+    const input = $('#promptInput');
+    input.focus();
+    input.select();
+    const done = (v) => {
+      closeModal();
+      resolve(v);
+    };
+    $('#promptOk').addEventListener('click', () => done(input.value));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') done(input.value);
+      if (e.key === 'Escape') done(null);
+    });
+    $$('#modalRoot [data-close]').forEach((b) => b.addEventListener('click', () => resolve(null)));
+    $('#modalRoot .modal-mask')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-mask')) resolve(null);
+    });
+  });
+}
+
+/** 确认框，返回 Promise<boolean> */
+function confirmBox({ title = '确认', body = '', okText = '确定', danger = true } = {}) {
+  return new Promise((resolve) => {
+    openModal(
+      `<h3>${esc(title)}</h3>
+       <p style="color:var(--text-2);font-size:13.5px;line-height:1.8">${body}</p>
+       <div class="modal-actions">
+         <button class="btn" data-close>取消</button>
+         <button class="btn ${danger ? 'danger' : 'primary'}" id="confirmOk">${esc(okText)}</button>
+       </div>`,
+    );
+    let answered = false;
+    const done = (v) => {
+      if (answered) return;
+      answered = true;
+      closeModal();
+      resolve(v);
+    };
+    $('#confirmOk').addEventListener('click', () => done(true));
+    $$('#modalRoot [data-close]').forEach((b) => b.addEventListener('click', () => done(false)));
+    $('#modalRoot .modal-mask')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-mask')) done(false);
+    });
+  });
+}
+
 /* --------------------------- API Key 引导页 & 设置 --------------------------- */
 
 const PROVIDER_FALLBACK = [
@@ -1902,7 +2549,10 @@ function wireStaticEvents() {
   });
   $('#settingsBtn').addEventListener('click', openSettings);
 
-  $('#newProjectBtn').addEventListener('click', () => switchToOwnProject(true));
+  $('#newProjectBtn').addEventListener('click', () => newProjectUI());
+  $('#newGroupBtn').addEventListener('click', newGroupUI);
+  wireGroups();
+  wireDock();
 
   $('#fileList').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-act]');

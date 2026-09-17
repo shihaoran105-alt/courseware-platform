@@ -8,6 +8,7 @@ import {
   ALIGN_SYSTEM,
   ANALYZE_SYSTEM,
   CHAT_SYSTEM,
+  DOCK_SYSTEM,
   EXAMPLES_SYSTEM,
   EXPLAIN_SYSTEM,
   GRADE_SYSTEM,
@@ -20,6 +21,7 @@ import {
   alignUser,
   analyzeUser,
   chatUser,
+  dockUser,
   examplesUser,
   explainUser,
   gradeUser,
@@ -356,6 +358,29 @@ export async function askQuestion({ files, cfg, question, history = [], signal, 
     system: CHAT_SYSTEM,
     messages,
     user: chatUser(files.context || '（课件没有可提取的文字内容）', question),
+    maxTokens: 4096,
+    temperature: 0.3,
+    signal,
+    onDelta,
+  });
+}
+
+/**
+ * 右侧「AI 咨询」：带着用户拖进来的内容块对话。
+ *
+ * 和「课件问答」的区别：那边是泛问整份课件，这边焦点是用户从界面上拖过来的具体块
+ * （某个实验步骤、某道题、某页讲解稿…），所以要把这些块显式放进提示词。
+ */
+export async function dockAsk({ files, cfg, question, attachments = [], history = [], signal, onDelta }) {
+  const messages = history
+    .filter((m) => m && m.content)
+    .slice(-10)
+    .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 6000) }));
+
+  return stream(cfg, {
+    system: DOCK_SYSTEM,
+    messages,
+    user: dockUser(files.context || '', attachments, question),
     maxTokens: 4096,
     temperature: 0.3,
     signal,

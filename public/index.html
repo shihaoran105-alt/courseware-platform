@@ -27,9 +27,16 @@
 
   <div class="body">
     <aside class="sidebar">
+      <!-- 项目组：EIE3333 → Lecture 1 / Tut 1 / Lab 1，每个小项目各自保存生成好的内容 -->
+      <div class="sidebar-head">
+        <h2>项目组</h2>
+        <button class="btn sm ghost" id="newGroupBtn" title="新建项目组，例如 EIE3333">新建组</button>
+      </div>
+      <div class="group-list" id="groupList"></div>
+
       <div class="sidebar-head">
         <h2>课件文件</h2>
-        <button class="btn sm ghost" id="newProjectBtn" title="新建一个课件项目">新建</button>
+        <button class="btn sm ghost" id="newProjectBtn" title="在这个项目组里新建一个项目">新建</button>
       </div>
       <div class="sidebar-scroll">
         <div class="dropzone" id="dropzone">
@@ -51,6 +58,27 @@
       <nav class="tabs" id="tabs"></nav>
       <div class="tab-body" id="tabBody"></div>
     </main>
+
+    <!-- 右侧 AI 咨询：把左边任意内容拖进来提问 -->
+    <aside class="ai-dock" id="aiDock">
+      <div class="dock-head">
+        <span class="dock-title" id="dockTitle">AI 咨询</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="dockClear" title="清空对话"></button>
+        <button class="icon-btn" id="dockToggle" title="收起 / 展开"></button>
+      </div>
+      <div class="dock-body" id="dockBody">
+        <div class="dock-ctx" id="dockCtx"></div>
+        <div class="dock-msgs" id="dockMsgs"></div>
+        <div class="dock-compose">
+          <textarea id="dockInput" rows="2" placeholder="把左侧任意内容拖到这里，再提问；只拖不问也可以，AI 会主动讲解"></textarea>
+          <div class="dock-actions">
+            <span class="dock-hint" id="dockHint">拖入内容后提问</span>
+            <button class="btn sm primary" id="dockSend" disabled></button>
+          </div>
+        </div>
+      </div>
+    </aside>
   </div>
 </div>
 

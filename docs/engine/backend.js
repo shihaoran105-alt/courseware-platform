@@ -9,7 +9,16 @@
    所以 app.js / quiz-lab.js 不需要区分自己在哪种模式下运行。
    ============================================================ */
 
-import { askQuestion, answerKeyExcerpt, explainQuestion, gradeAnswer, checkLab, rerunStage, runFullAnalysis } from './pipeline.js';
+import {
+  askQuestion,
+  answerKeyExcerpt,
+  checkLab,
+  dockAsk,
+  explainQuestion,
+  gradeAnswer,
+  rerunStage,
+  runFullAnalysis,
+} from './pipeline.js';
 import { complete } from './ai.js';
 import { toMarkdown } from './export.js';
 import { PROVIDERS, DEFAULT_KEY_URL } from './providers.js';
@@ -26,6 +35,29 @@ const lsGet = (k) => {
     return '';
   }
 };
+
+/* ------------------------------ 项目组（纯静态版存本地） ------------------------------ */
+
+const LS_GROUPS = 'cw_groups';
+
+function readGroups() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_GROUPS) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeGroups(list) {
+  try {
+    localStorage.setItem(LS_GROUPS, JSON.stringify(list));
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
+const newGroupId = () => `g_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 const DEFAULT_BASE = 'https://api.deepseek.com';
 const DEFAULT_MODEL = 'deepseek-chat';
@@ -81,6 +113,7 @@ function slim(project) {
   return {
     id: project.id,
     name: project.name,
+    groupId: project.groupId || '',
     shared: false,
     isMine: true,
     createdAt: project.createdAt,
@@ -91,6 +124,7 @@ function slim(project) {
     attempts: project.attempts || {},
     labProgress: project.labProgress || {},
     explain: project.explain || {},
+    dockChat: project.dockChat || [],
     shape: projectShape(project.files || []),
     files: (project.files || []).map((f) => ({
       id: f.id,
@@ -123,16 +157,18 @@ async function save(project) {
   return project;
 }
 
-async function newProject(name = '未命名课件') {
+async function newProject(name = '未命名课件', groupId = '') {
   const now = new Date().toISOString();
   const project = {
     id: newId(),
     name,
+    groupId: groupId || '',
     createdAt: now,
     updatedAt: now,
     files: [],
     analysis: null,
     chat: [],
+    dockChat: [],
     attempts: {},
     labProgress: {},
     explain: {},
@@ -185,7 +221,7 @@ function findLab(project, lid) {
 
 /* ------------------------------ 上传 ------------------------------ */
 
-async function upload(_projectId, files, onProgress) {
+export async function upload(_projectId, files, onProgress) {
   const project = await currentProject();
   const added = [];
   const failed = [];
@@ -292,6 +328,67 @@ export async function api(path, options = {}) {
     }
   }
 
+  /* ---------------------------- 项目组 ---------------------------- */
+
+  if (p === '/api/groups' && method === 'GET') {
+    const all = await allProjects();
+    return {
+      groups: readGroups(),
+      projects: all
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+        .map((x) => ({
+          id: x.id,
+          name: x.name,
+          groupId: x.groupId || '',
+          shared: false,
+          isMine: true,
+          createdAt: x.createdAt,
+          updatedAt: x.updatedAt,
+          fileCount: (x.files || []).length,
+          hasAnalysis: Boolean(x.analysis),
+          totalChars: (x.files || []).reduce((n, f) => n + (f.chars || 0), 0),
+          roleCount: (x.files || []).reduce((mp, f) => {
+            const r = f.role || classifyRole(f.originalName, f.kind);
+            mp[r] = (mp[r] || 0) + 1;
+            return mp;
+          }, {}),
+        })),
+    };
+  }
+
+  if (p === '/api/groups' && method === 'POST') {
+    const name = String(body.name || '').trim().slice(0, 60);
+    if (!name) throw Object.assign(new Error('请填写项目组名称'), { status: 400 });
+    const g = { id: newGroupId(), name, createdAt: new Date().toISOString() };
+    writeGroups([...readGroups(), g]);
+    return { group: g };
+  }
+
+  if ((m = p.match(/^\/api\/groups\/([^/]+)$/))) {
+    const list = readGroups();
+    const i = list.findIndex((g) => g.id === m[1]);
+    if (i < 0) throw Object.assign(new Error('项目组不存在'), { status: 404 });
+    if (method === 'PATCH') {
+      const name = String(body.name || '').trim().slice(0, 60);
+      if (name) list[i].name = name;
+      writeGroups(list);
+      return { group: list[i] };
+    }
+    if (method === 'DELETE') {
+      // 删组不删项目：组里的项目退回「未分组」
+      const all = await allProjects();
+      for (const x of all) {
+        if (x.groupId === m[1]) {
+          x.groupId = '';
+          await save(x);
+        }
+      }
+      const next = list.filter((g) => g.id !== m[1]);
+      writeGroups(next);
+      return { ok: true, groups: next };
+    }
+  }
+
   if (p === '/api/projects' && method === 'GET') {
     const all = await allProjects();
     return {
@@ -300,6 +397,7 @@ export async function api(path, options = {}) {
         .map((x) => ({
           id: x.id,
           name: x.name,
+          groupId: x.groupId || '',
           shared: false,
           isMine: true,
           createdAt: x.createdAt,
@@ -307,15 +405,28 @@ export async function api(path, options = {}) {
           fileCount: (x.files || []).length,
           hasAnalysis: Boolean(x.analysis),
           totalChars: (x.files || []).reduce((n, f) => n + (f.chars || 0), 0),
+          roleCount: (x.files || []).reduce((mp, f) => {
+            const r = f.role || classifyRole(f.originalName, f.kind);
+            mp[r] = (mp[r] || 0) + 1;
+            return mp;
+          }, {}),
         })),
     };
   }
 
-  if (p === '/api/projects' && method === 'POST') return slim(await newProject((body.name || '未命名课件').slice(0, 120)));
+  if (p === '/api/projects' && method === 'POST') {
+    return slim(await newProject((body.name || '未命名课件').slice(0, 120), String(body.groupId || '')));
+  }
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)$/))) {
     const project = hydrate(await getProject(m[1]));
     if (!project) throw Object.assign(new Error('项目不存在或已被删除'), { status: 404 });
+    if (method === 'PATCH') {
+      if (typeof body.name === 'string' && body.name.trim()) project.name = body.name.trim().slice(0, 120);
+      if (typeof body.groupId === 'string') project.groupId = body.groupId;
+      await save(project);
+      return slim(project);
+    }
     if (method === 'DELETE') {
       await delProject(m[1]);
       if (currentId() === m[1]) setCurrentId('');
@@ -323,6 +434,14 @@ export async function api(path, options = {}) {
     }
     setCurrentId(project.id);
     return slim(project);
+  }
+
+  if ((m = p.match(/^\/api\/projects\/([^/]+)\/ask$/)) && method === 'DELETE') {
+    const project = await getProject(m[1]);
+    if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
+    project.dockChat = [];
+    await save(project);
+    return { ok: true, dockChat: [] };
   }
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/files\/([^/]+)\/text$/))) {
@@ -499,6 +618,7 @@ export async function api(path, options = {}) {
 export async function postSSE(path, body, onEvent) {
   const m =
     path.match(/^\/api\/projects\/([^/]+)\/analyze$/) ||
+    path.match(/^\/api\/projects\/([^/]+)\/ask$/) ||
     path.match(/^\/api\/projects\/([^/]+)\/chat$/);
   if (!m) throw new Error(`静态版不支持这个流式接口：${path}`);
   const project = await getProject(m[1]);
@@ -516,6 +636,41 @@ export async function postSSE(path, body, onEvent) {
     project.analysisStale = false;
     await save(project);
     onEvent({ type: 'saved', project: slim(project) });
+    return;
+  }
+
+  // 右侧 AI 咨询：带着用户拖进来的内容块
+  if (/\/ask$/.test(path)) {
+    const question = String(body?.question || '').trim();
+    const attachments = (Array.isArray(body?.attachments) ? body.attachments : []).slice(0, 12).map((a) => ({
+      title: String(a?.title || '').slice(0, 160),
+      source: String(a?.source || '').slice(0, 160),
+      text: String(a?.text || '').slice(0, 6000),
+    }));
+    if (!question && !attachments.length) {
+      throw Object.assign(new Error('请先拖入要讨论的内容，或输入一个问题'), { status: 400 });
+    }
+    const cfg = aiConfig();
+    let answer = '';
+    project.dockChat = project.dockChat || [];
+    const text = await dockAsk({
+      files: contextFor(project),
+      cfg,
+      question,
+      attachments,
+      history: project.dockChat.slice(-10),
+      onDelta: (d) => {
+        answer += d;
+        onEvent({ type: 'delta', text: d });
+      },
+    });
+    answer = text || answer;
+    if (!answer) throw new Error('模型没有返回内容，请重试');
+    project.dockChat.push({ role: 'user', content: question, attachments, at: new Date().toISOString() });
+    project.dockChat.push({ role: 'assistant', content: answer, at: new Date().toISOString() });
+    project.dockChat = project.dockChat.slice(-80);
+    await save(project);
+    onEvent({ type: 'done' });
     return;
   }
 
