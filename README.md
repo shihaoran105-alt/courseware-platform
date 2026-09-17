@@ -196,6 +196,18 @@ export GROQ_API_KEY=gsk_xxxxxxxx
 
 ## 快速开始
 
+### macOS 双击一键启动（推荐）
+
+在 Finder 里双击 **`一键安装并启动.command`**：
+
+- 自动检查 Node.js 20+；本机有 Homebrew 时可自动安装 Node.js
+- 首次运行自动安装项目依赖
+- 启动完成后自动打开 `http://127.0.0.1:4173`
+
+> 如果 macOS 首次拦截，请右键该文件 →「打开」。
+
+### 命令行启动
+
 ```bash
 cd courseware-platform
 npm install          # 首次运行
