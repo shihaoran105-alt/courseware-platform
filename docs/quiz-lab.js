@@ -244,7 +244,6 @@ function explainPanel(q, entry) {
         ${arr(r.pageRefs)
           .map((p) => `<span class="page-ref">${esc(p)}</span>`)
           .join('')}
-        <button class="btn sm ghost" id="quizExplainRefresh">重新生成</button>
       </div>
     </div>
 
@@ -488,8 +487,7 @@ function wireQuiz() {
   });
 
   $('#quizSubmit')?.addEventListener('click', submitAnswer);
-  $('#quizExplain')?.addEventListener('click', () => loadExplain(false));
-  $('#quizExplainRefresh')?.addEventListener('click', () => loadExplain(true));
+  $('#quizExplain')?.addEventListener('click', () => loadExplain());
 
   $('#quizResetOne')?.addEventListener('click', async () => {
     const q = currentQuestion();
@@ -568,25 +566,22 @@ async function submitAnswer() {
   }
 }
 
-/**
- * 结合课件讲解这道题。
- * @param {boolean} force true 时忽略缓存重新生成
- */
-async function loadExplain(force) {
+/** 结合课件讲解这道题（已有结果时直接用缓存，不再重复花钱） */
+async function loadExplain() {
   if (qlState.busy) return;
   const q = currentQuestion();
   if (!q) return;
   qlState.busy = true;
-  const btn = force ? $('#quizExplainRefresh') : $('#quizExplain');
+  const btn = $('#quizExplain');
   const label = btn ? btn.textContent : '';
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = SPIN_SVG + (force ? '重新生成中…' : '正在对照课件备课…');
+    btn.innerHTML = SPIN_SVG + '正在对照课件备课…';
   }
   try {
     const res = await api(`/api/projects/${state.project.id}/explain`, {
       method: 'POST',
-      body: JSON.stringify({ questionId: q.id, cached: !force }),
+      body: JSON.stringify({ questionId: q.id }),
     });
     state.project.explain = state.project.explain || {};
     state.project.explain[q.id] = { result: res.result, excerpt: res.excerpt, at: new Date().toISOString() };
