@@ -294,6 +294,24 @@ export async function api(path, options = {}) {
 
   if (p === '/api/health') return { ok: true, service: '课件讲解平台（静态版）', static: true };
 
+  // 版本号：静态版没有服务端，直接读同目录的 version.json。
+  // 必须带 cache-bust —— GitHub Pages 会给它上缓存，否则永远发现不了新部署。
+  if (p === '/api/version') {
+    try {
+      const res = await fetch(`./version.json?_=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(String(res.status));
+      const v = await res.json();
+      return {
+        version: String(v.version || '0.0.0'),
+        releasedAt: v.releasedAt || '',
+        history: Array.isArray(v.history) ? v.history : [],
+        static: true,
+      };
+    } catch {
+      return { version: '', releasedAt: '', history: [], static: true };
+    }
+  }
+
   if (p === '/api/config') {
     const all = await allProjects();
     const id = currentId();

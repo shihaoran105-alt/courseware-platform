@@ -62,6 +62,40 @@
 
 ---
 
+## 版本号与更新提示
+
+右上角「模型：」旁边显示当前版本号，例如 `v1.0.0`。
+
+- **有新版本时它会变红**，文案变成 `v1.0.0 → v1.1.0`，并轻微呼吸
+- **点一下**看这次更新改了什么，再点「更新平台」即可刷新到新版本
+- 没有新版本时点它，看到的是版本历史
+
+页面每 45 秒问一次服务器；切换回标签页或窗口重新获得焦点时也会立刻问一次。
+前端资源（html / js / css / json）一律带 `no-cache`，所以「更新」是真的能拿到新文件的。
+
+### 怎么发一个新版本
+
+版本号在仓库根目录的 `version.json`，同时会同步到 `package.json`：
+
+```bash
+# 版本更新：1.0.0 → 1.1.0
+npm run version:minor -- "这次新增了什么" "第二条说明"
+
+# 小补丁迭代：1.0.0 → 1.0.1
+npm run version:patch -- "这次修了什么"
+
+# 看当前版本和完整历史
+npm run version:show
+```
+
+> **在对话里说「标记为版本更新」= 自动 minor，说「标记为小补丁迭代」= 自动 patch**，
+> 我会顺手把更新说明写进 `version.json` 的 history 里。
+
+静态版（GitHub Pages）也适用：`version.json` 会一起构建进 `docs/`，
+浏览器带 cache-bust 去拉它，所以重新部署后访客那边同样会变红提示。
+
+---
+
 ## 项目组：一个课程一个组，一次讲解一个项目
 
 侧边栏是两级结构：
@@ -522,6 +556,7 @@ courseware-platform/
 │   ├── store.mjs               项目持久化 + 归属鉴权（含做题记录、Lab 进度、课件精讲缓存）
 │   ├── roles.mjs               按文件名判定材料角色（标准答案 / 实验 / 习题 / 课件 / 录像）+ 答案册配对
 │   ├── groups.mjs              项目组（EIE3333 → Lecture 1 / Tut 1 / Lab 1）
+│   ├── version.mjs             读 version.json（版本号 & 更新历史）
 │   ├── stt.mjs                 语音转写：本地 whisper.cpp / 讯飞 / Groq / OpenAI 自动择优
 │   ├── render.mjs              预览 PDF 生成（PDF 直传，Office 走 LibreOffice headless）
 │   ├── media-tools.mjs         ffmpeg 探测、时长探测、音轨提取与切分
@@ -554,7 +589,9 @@ courseware-platform/
 │   ├── serve-static.mjs        本地预览静态版
 │   ├── test-extract.mjs        解析层冒烟测试
 │   ├── test-stt.mjs            单独验证语音转写链路（可 --provider 指定服务商）
+│   ├── bump-version.mjs        版本号：minor / patch / show
 │   └── mark-demo.mjs           把某个项目标成公开演示（只读）
+├── version.json                ★ 当前版本号 + 更新历史（右上角红点靠它）
 ├── .env.example                全部环境变量说明
 ├── start.sh                    一键启动（./start.sh --public 公开部署）
 └── data/                       运行时数据（仅服务端版）

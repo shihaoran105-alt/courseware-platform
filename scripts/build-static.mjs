@@ -64,6 +64,9 @@ for (const f of ['extract.js', 'store.js', 'backend.js']) {
   log('引擎  ' + f);
 }
 copy(path.join(SRC, 'boot.js'), path.join(OUT, 'static-boot.js'));
+// 版本清单：静态版靠它检测 GitHub Pages 上有没有新部署
+copy(path.join(ROOT, 'version.json'), path.join(OUT, 'version.json'));
+log('版本  version.json');
 log('引导  static-boot.js');
 
 // ---------- 4. 第三方库 ----------

@@ -55,6 +55,8 @@ const state = {
   collapsedGroups: new Set(),
   // 右侧 AI 咨询
   dock: { open: true, attachments: [], sending: false },
+  // 版本号：current = 服务器上的版本，loaded = 我这一页的版本
+  version: null,
 };
 
 /** 服务器是否必须让访客自带 Key */
@@ -337,6 +339,7 @@ async function init() {
   syncView();
   render();
   applyHash();
+  wireVersion();
   maybeShowGate();
 }
 
@@ -417,6 +420,134 @@ function renderConfigChips() {
   }
   chip.style.cursor = 'pointer';
   chip.onclick = () => openSettings();
+}
+
+/* ==================== 版本号 & 更新提示 ==================== */
+
+/**
+ * 版本检测的思路：
+ *   页面加载时记下「我这一页是什么版本」（state.version.loaded），
+ *   之后定时问一次服务器现在是什么版本。两者不一致 = 服务器上的代码比我手上这页新，
+ *   右上角版本号变红，点开就能看更新内容并一键更新。
+ *
+ * 这正好覆盖「代码改了、服务重启了，但你页面还开着」的场景 —— 不用再手动 Cmd+Shift+R。
+ */
+const VERSION_POLL_MS = 45000;
+
+async function loadVersion({ initial = false } = {}) {
+  try {
+    const v = await api('/api/version', { cache: 'no-store' });
+    if (!v?.version) return;
+    const prev = state.version;
+    state.version = {
+      current: v.version,
+      releasedAt: v.releasedAt || '',
+      history: arr(v.history),
+      // 页面刚加载时，当前版本就是「我这一页的版本」
+      loaded: initial || !prev ? v.version : prev.loaded,
+    };
+    renderVersionChip();
+    if (!initial && prev && prev.current !== v.version) {
+      toast(`平台已更新到 ${v.version}，点右上角版本号查看更新内容`, 'ok');
+    }
+  } catch {
+    /* 拿不到就当作没有版本信息，不打扰用户 */
+  }
+}
+
+function renderVersionChip() {
+  const el = $('#versionChip');
+  if (!el) return;
+  const v = state.version;
+  if (!v?.current) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = '';
+  const stale = Boolean(v.loaded) && v.loaded !== v.current;
+  el.className = 'chip version-chip' + (stale ? ' stale' : '');
+  el.textContent = stale ? `v${v.loaded} → v${v.current}` : `v${v.current}`;
+  el.title = stale ? `有新版本 v${v.current}，点击查看更新内容` : `当前版本 v${v.current}，点击查看更新历史`;
+}
+
+/** 列出「比我现在这一页新」的那些版本 */
+function pendingChanges() {
+  const v = state.version;
+  if (!v) return [];
+  const list = arr(v.history);
+  const cut = list.findIndex((h) => h.version === v.loaded);
+  if (cut === 0) return [];
+  if (cut > 0) return list.slice(0, cut);
+  // loaded 不在历史里（例如从更早的版本升上来），就把比它新的都列出来
+  return list.filter((h) => compareVersion(h.version, v.loaded) > 0);
+}
+
+function compareVersion(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function openVersionModal() {
+  const v = state.version || {};
+  const pending = pendingChanges();
+  const stale = Boolean(v.loaded) && v.loaded !== v.current;
+
+  const block = (h) => `<h4>
+      <span class="ver-tag">v${esc(h.version)}</span>
+      ${esc(h.title || '')}
+      <span class="ver-date">${esc(h.date || '')}</span>
+    </h4>
+    ${arr(h.changes).length ? `<ul>${h.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}`;
+
+  const body = stale
+    ? `<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
+         你这一页还是 <b>v${esc(v.loaded)}</b>，服务器上已经是 <b>v${esc(v.current)}</b>。
+       </p>
+       <div class="changelog">${pending.map(block).join('') || '<p style="color:var(--ink-4)">（这次更新没有写说明）</p>'}</div>`
+    : `<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
+         当前已是最新版本 <b>v${esc(v.current)}</b>${v.releasedAt ? `（${esc(String(v.releasedAt).slice(0, 10))}）` : ''}。
+       </p>
+       <div class="changelog">${arr(v.history).slice(0, 6).map(block).join('')}</div>`;
+
+  openModal(
+    `<h3>${stale ? '发现新版本' : '版本历史'}</h3>
+     ${body}
+     <div class="modal-actions">
+       <button class="btn" data-close>关闭</button>
+       ${stale ? `<button class="btn primary" id="doUpdate">${icon('download', 13)}更新平台</button>` : ''}
+     </div>`,
+  );
+  $('#doUpdate')?.addEventListener('click', doUpdate);
+}
+
+/**
+ * 「更新」= 带版本号重新加载。
+ *
+ * 前端资源已经是 no-cache，直接重载就能拿到新文件；
+ * 仍然带上 ?v= 参数，让中间任何一层代理缓存也一并失效。
+ */
+function doUpdate() {
+  const v = state.version?.current || Date.now();
+  const { pathname, hash } = window.location;
+  window.location.replace(`${pathname}?v=${encodeURIComponent(v)}${hash}`);
+}
+
+function wireVersion() {
+  const el = $('#versionChip');
+  if (!el) return;
+  el.addEventListener('click', openVersionModal);
+  loadVersion({ initial: true });
+  // 定时问一次；切回这个标签页 / 窗口重新获得焦点时也立刻问一次
+  setInterval(() => loadVersion(), VERSION_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadVersion();
+  });
+  window.addEventListener('focus', () => loadVersion());
 }
 
 function syncView() {

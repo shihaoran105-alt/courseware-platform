@@ -16,6 +16,7 @@ import {
   saveConfig,
   serverKey,
 } from './config.mjs';
+import { VERSION_FILE, readVersion } from './version.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -1117,8 +1118,42 @@ app.use(
   express.static(MEDIA_DIR, { maxAge: '1h' }),
 );
 
-app.use(express.static(PUBLIC_DIR));
-app.get('/', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
+// 前端资源一律协商缓存：这个项目是边改边用的，强缓存会让「点更新」也拿不到新文件
+const noStore = (res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+};
+app.use(
+  express.static(PUBLIC_DIR, {
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+      if (/.(html|js|mjs|css|json)$/i.test(filePath)) noStore(res);
+    },
+  }),
+);
+app.get('/', (_req, res) => {
+  noStore(res);
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
+/* -------------------------------- 版本号 -------------------------------- */
+
+/**
+ * 前端靠这个判断「服务器上的代码是不是比我手上这页新」。
+ * 必须每次读盘、且禁止缓存，否则改了版本号页面也发现不了。
+ */
+app.get('/api/version', (_req, res) => {
+  noStore(res);
+  res.json(readVersion());
+});
+
+// 静态版和外部工具也能直接取到这份清单
+app.get('/version.json', (_req, res) => {
+  noStore(res);
+  res.type('application/json').sendFile(VERSION_FILE);
+});
 
 /* -------------------------------- 错误处理 ------------------------------- */
 
