@@ -147,21 +147,30 @@ export UPDATE_CHECK_URL=https://raw.githubusercontent.com/<用户名>/<仓库>/m
 
 ### 怎么发一个新版本
 
-版本号在仓库根目录的 `version.json`，同时会同步到 `package.json`：
+版本号在仓库根目录的 `version.json`，同时会同步到 `package.json`。
+
+**先判断该发哪种**（这条规则是为了让用户看版本号就知道这次改动的分量）：
+
+| 这次做了什么 | 发哪种 | 例子 |
+| --- | --- | --- |
+| 加了新功能、新交互、新能力 | **minor**（版本更新） | 1.1.0 → **1.2.0** |
+| 只修 bug、改文案、调样式、优化性能 | **patch**（小补丁迭代） | 1.2.0 → **1.2.1** |
 
 ```bash
-# 版本更新：1.0.0 → 1.1.0
-npm run version:minor -- "这次新增了什么" "第二条说明"
+# 版本更新：1.1.0 → 1.2.0
+npm run version:minor -- "标题" "第一条说明" "第二条说明"
 
-# 小补丁迭代：1.0.0 → 1.0.1
-npm run version:patch -- "这次修了什么"
+# 小补丁迭代：1.2.0 → 1.2.1
+npm run version:patch -- "标题" "修了什么"
 
 # 看当前版本和完整历史
 npm run version:show
 ```
 
-> **在对话里说「标记为版本更新」= 自动 minor，说「标记为小补丁迭代」= 自动 patch**，
-> 我会顺手把更新说明写进 `version.json` 的 history 里。
+第一个参数是**标题**（要短），后面的是分条说明 —— 别把一整句话塞进标题。
+
+> **在对话里说「标记为版本更新」= minor，说「标记为小补丁迭代」= patch。**
+> 拿不准的时候看第一条：**能写进「新增了什么」的就是 minor**。
 
 静态版（GitHub Pages）也适用：`version.json` 会一起构建进 `docs/`，
 浏览器带 cache-bust 去拉它，所以重新部署后访客那边同样会变红提示。
