@@ -399,6 +399,17 @@ export GROQ_API_KEY=gsk_xxxxxxxx
 
 > 如果 macOS 首次拦截，请右键该文件 →「打开」。
 
+### Windows 双击一键启动
+
+从 GitHub 下载 **`一键启动器-Windows.zip`**，解压后把其中的 **`一键安装并启动-Windows.cmd`** 放到项目根目录，然后双击：
+
+- 自动检查 Node.js 20+；支持 `winget` 的 Windows 可自动安装 Node.js LTS
+- 首次运行自动安装项目依赖
+- 启动完成后自动打开 `http://127.0.0.1:4173`
+- 运行时请保持命令窗口打开；按 `Ctrl+C` 可停止服务
+
+> 如果 Windows 显示安全提示，请确认文件来自本项目后选择「仍要运行」。
+
 ### 命令行启动
 
 ```bash
