@@ -138,6 +138,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     errors: [],
     usage: { promptTokens: 0, completionTokens: 0 },
     model: cfg.model,
+    // 这一轮是用什么语言生成的（前端靠它判断要不要叠英文）
+    lang: cfg.lang || 'zh',
     generatedAt: new Date().toISOString(),
     elapsedMs: 0,
   };

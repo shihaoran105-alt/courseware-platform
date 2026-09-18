@@ -55,6 +55,9 @@ const state = {
   collapsedGroups: new Set(),
   // 右侧 AI 咨询
   dock: { open: true, attachments: [], sending: false },
+  // 中英对照的显示方式：both（上下对照）| zh（只看中文）| en（只看英文）
+  biView: 'both',
+  passLabel: '',
   // 版本号：current = 服务器上的版本，loaded = 我这一页的版本，
   // remote = GitHub 上的版本（由服务端后台去拉）
   version: null,
@@ -1433,6 +1436,76 @@ function renderTabs() {
   );
 }
 
+/**
+ * 渲染当前标签页。
+ *
+ * 中英对照模式下，同一个渲染函数用两份数据各跑一次：先中文，分隔线，再英文。
+ * 复用同一套渲染器，所以对照版的结构、截图、样式跟单语版完全一致，
+ * 不会出现「中文版是新的、英文版是旧的」这种两套代码各自漂移的问题。
+ */
+function renderStageWithAlt(a) {
+  const alt = a.analysisEn || null;
+  const both = Boolean(alt) && state.biView !== 'zh' && state.biView !== 'en';
+
+  // 只想看单一语言时，直接按对应那份数据渲染
+  if (alt && state.biView === 'en') return renderStageOne(alt);
+  const zh = renderStageOne(a);
+  if (!both) return zh;
+
+  const en = renderStageOne(alt);
+  // 英文那半边如果没有内容（这一阶段没勾选），就不要画一条空分隔线
+  if (!en.trim()) return zh;
+  return `${zh}
+    <div class="bi-split"><span>English</span></div>
+    <div class="bi-alt">${en}</div>`;
+}
+
+/**
+ * 用给定的一份数据渲染当前标签页。
+ *
+ * 这里临时把 state.project.analysis 换成要渲染的那一份 —— 因为 quizInner / labInner /
+ * renderCombine 这些内部函数是直接读全局 state 的，与其把数据参数一路穿进六个渲染器和
+ * 它们的子函数（改动面大、以后容易漏），不如在这儿换一次、渲染完换回来。
+ * 只在一帧内同步发生，不会漏给别的代码看到。
+ */
+function renderStageOne(data) {
+  const saved = state.project?.analysis;
+  if (!state.project || !data || data === saved) return renderStageCurrent();
+  state.project.analysis = { ...saved, ...data };
+  try {
+    return renderStageCurrent();
+  } finally {
+    state.project.analysis = saved;
+  }
+}
+
+function renderStageCurrent() {
+  if (state.tab === 'overview') return renderOverview(state.project.analysis?.analysis);
+  if (state.tab === 'examples') return renderExamples(state.project.analysis?.examples);
+  if (state.tab === 'guide') return renderGuide(state.project.analysis?.guide, state.project.analysis?.analysis);
+  if (state.tab === 'combine') return renderCombine();
+  if (state.tab === 'narration') return renderNarration(state.project.analysis?.narration);
+  if (state.tab === 'quiz') return renderQuiz(state.project.analysis?.quiz);
+  if (state.tab === 'lab') return renderLab(state.project.analysis?.lab);
+  return '';
+}
+
+/**
+ * 英文那一半是「拿来对照着看的」，不该再有一套能操作的控件 ——
+ * 去掉 id 避免和中文那半撞车，控件全部禁用，按钮直接藏掉。
+ */
+function wireAltBlock() {
+  const alt = $('#tabBody .bi-alt');
+  if (!alt) return;
+  alt.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+  alt.querySelectorAll('input, textarea, select').forEach((el) => {
+    el.disabled = true;
+  });
+  alt.querySelectorAll('button').forEach((el) => {
+    el.style.display = 'none';
+  });
+}
+
 function renderBody() {
   // 正文要被整体替换，上一轮登记的拖拽 key 全部作废
   dndStore.clear();
@@ -1475,17 +1548,13 @@ function renderBody() {
         .join('<br>')}</div>`
     : '';
   let inner = '';
-  if (state.tab === 'overview') inner = renderOverview(a.analysis);
-  else if (state.tab === 'examples') inner = renderExamples(a.examples);
-  else if (state.tab === 'guide') inner = renderGuide(a.guide, a.analysis);
-  else if (state.tab === 'combine') inner = renderCombine();
-  else if (state.tab === 'narration') inner = renderNarration(a.narration);
-  else if (state.tab === 'quiz') inner = renderQuiz(a.quiz);
-  else if (state.tab === 'lab') inner = renderLab(a.lab);
-  else if (state.tab === 'chat') {
+  // 课件问答自己往 #tabBody 里写，必须在这里就返回，否则会被下面的 panel 覆盖掉
+  if (state.tab === 'chat') {
     renderChat();
     return;
   }
+  // 中英对照：中文段落渲染完，中间加一条分隔，再把英文那一遍原样渲染一次
+  inner = renderStageWithAlt(a);
   const stageMap = {
     overview: 'analysis',
     examples: 'examples',
@@ -1524,13 +1593,32 @@ function renderBody() {
   const staleBar = state.project.analysisStale
     ? `<div class="note-box" style="margin-bottom:12px">${icon('alert', 12)}课件文件在上次分析后有过变动，建议重新生成。</div>`
     : '';
+
+  // 中英对照生成的项目：给一个切换「对照 / 只看中文 / 只看英文」的小条，
+  // 不然每一页都被拉成两倍长，想专注看一种语言时很难受
+  const biBar = a.analysisEn
+    ? `<div class="bi-bar">
+        <span class="bi-bar-lbl">${icon('layers', 12)}中英对照</span>
+        ${[
+          ['both', '上下对照'],
+          ['zh', '只看中文'],
+          ['en', '只看 English'],
+        ]
+          .map(
+            ([k, label]) =>
+              `<button class="btn sm ${(state.biView || 'both') === k ? 'primary' : 'ghost'}" data-biview="${k}">${label}</button>`,
+          )
+          .join('')}
+      </div>`
+    : '';
   const demoBar = mine
     ? ''
     : `<div class="demo-bar">
          <span>${icon('users', 14)} 你正在浏览<b>公开演示项目</b>（只读）。里面的内容是用别人的课件生成的，可以直接体验讲解模式、做题和做 Lab。</span>
          <button class="btn sm primary" id="demoOwn">建立我自己的项目 →</button>
        </div>`;
-  body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${rerunBar}${inner}</div>`;
+  body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${rerunBar}${biBar}${inner}</div>`;
+  wireAltBlock();
 
   // 被跳过的节只挂一个「只生成这一节」按钮，别的交互都没东西可挂
   const genBtn = $('#genThisStage');
@@ -1546,6 +1634,12 @@ function renderBody() {
   else if (state.tab === 'lab') wireLab();
   const rb = $('#rerunBtn');
   if (rb) rb.addEventListener('click', () => rerunStageUI(rb.dataset.stage, rb));
+  $$('[data-biview]').forEach((b) =>
+    b.addEventListener('click', () => {
+      state.biView = b.dataset.biview;
+      render();
+    }),
+  );
   $('#demoOwn')?.addEventListener('click', () => switchToOwnProject(true));
 }
 
@@ -1584,7 +1678,7 @@ function renderProgress() {
   const pct = Math.round((state.progress || 0) * 100);
   $('#tabBody').innerHTML = `
     <div class="progress-wrap">
-      <h2 style="margin:0 0 6px;font-size:19px">正在读你的课件…</h2>
+      <h2 style="margin:0 0 6px;font-size:19px">正在读你的课件…${state.passLabel ? `<span class="pass-tag">${esc(state.passLabel)}</span>` : ''}</h2>
       <p style="color:var(--text-2);margin:0 0 4px">模型正在逐段分析内容、挑出事例、设计教学用法并撰写讲解稿，通常需要 1–3 分钟。</p>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div style="text-align:right;font-size:12px;color:var(--text-3);margin-top:6px">${pct}%</div>
@@ -1643,6 +1737,14 @@ function stageLabelOf(key) {
   return stageCatalog().find((s) => s.key === key)?.label || key;
 }
 
+/** 当前项目是用什么语言生成的：zh / en / bilingual */
+function langModeOf() {
+  const a = state.project?.analysis;
+  if (!a) return currentLang() === 'en' ? 'en' : 'zh';
+  if (a.analysisEn) return 'bilingual';
+  return a.lang === 'en' ? 'en' : 'zh';
+}
+
 /** 这次该默认勾哪些：第一次跑用推荐，重跑用上次实际生成成功的 */
 function defaultStageSelection() {
   const an = state.project?.analysis;
@@ -1680,6 +1782,24 @@ function openAnalyzeModal() {
   const hasVideo = arr(state.project?.shape?.video).length > 0;
   const reRun = Boolean(state.project?.analysis);
 
+  // 生成语言：中文 / English / 中英对照
+  const curLangMode = langModeOf();
+  const langPicker = `<div class="pick-head"><span>用什么语言生成</span></div>
+    <div class="lang-opts">
+      ${[
+        ['zh', '中文', '只生成中文内容'],
+        ['en', 'English', 'Generate everything in English only'],
+        ['bilingual', '中英对照', '生成两遍：上面中文段落，下面英文段落（耗时和额度约翻倍）'],
+      ]
+        .map(
+          ([k, label, hint]) => `<label class="lang-opt ${k === 'bilingual' ? 'bi' : ''}">
+            <input type="radio" name="genLang" value="${k}" ${k === curLangMode ? 'checked' : ''}>
+            <span class="lang-opt-body"><b>${esc(label)}</b><i>${esc(hint)}</i></span>
+          </label>`,
+        )
+        .join('')}
+    </div>`;
+
   const rows = stageCatalog()
     .map((s) => {
       // 有上课录像时，逐页讲解稿是转写出来的，不在这里生成
@@ -1711,6 +1831,8 @@ function openAnalyzeModal() {
          : ''
      }
 
+     ${langPicker}
+
      <div class="stage-pick-head">
        <span>自己挑要生成哪些</span>
        <span class="spacer"></span>
@@ -1732,12 +1854,18 @@ function openAnalyzeModal() {
       .filter((c) => c.checked && !c.disabled)
       .map((c) => c.dataset.stage);
 
-  const syncGo = () => {
+  const syncGo = (mode) => {
     const n = selected().length;
     const go = $('#stageGo');
     if (!go) return;
+    const m = mode || $$('#modalRoot [name="genLang"]').find((x) => x.checked)?.value || 'zh';
     go.disabled = n === 0;
-    go.innerHTML = n ? `${icon('play', 13)}开始生成（${n} 项）` : '至少勾一项';
+    if (!n) {
+      go.innerHTML = '至少勾一项';
+      return;
+    }
+    const passes = m === 'bilingual' ? ' · 中英各一遍' : '';
+    go.innerHTML = `${icon('play', 13)}开始生成（${n} 项${passes}）`;
   };
 
   $$('#modalRoot [data-stage]').forEach((c) => c.addEventListener('change', syncGo));
@@ -1759,9 +1887,18 @@ function openAnalyzeModal() {
   $('#stageGo')?.addEventListener('click', () => {
     const keys = selected();
     if (!keys.length) return;
+    const pick = $$('#modalRoot [name="genLang"]').find((r) => r.checked);
+    const mode = pick?.value || 'zh';
     closeModal();
-    runAnalysis(keys);
+    runAnalysis(keys, mode);
   });
+  $$('#modalRoot [name="genLang"]').forEach((r) =>
+    r.addEventListener('change', () => {
+      // 对照模式会让生成时间和额度翻倍，勾选后按钮上直接说明
+      const m = $$('#modalRoot [name="genLang"]').find((x) => x.checked)?.value;
+      syncGo(m);
+    }),
+  );
   syncGo();
 }
 
@@ -2607,7 +2744,7 @@ async function askChat(question) {
  * 跑分析。
  * @param {string[]} [stages] 只生成这些模式；不传 = 全都生成（老行为）
  */
-async function runAnalysis(stages) {
+async function runAnalysis(stages, langMode = 'zh') {
   if (!state.project?.files?.length) return;
   if (!state.project.isMine) {
     toast('这是公开的演示项目，只能查看。请点左侧「新建」建立自己的项目。', 'err');
@@ -2620,6 +2757,8 @@ async function runAnalysis(stages) {
   const want = arr(stages).length ? stages : stageCatalog().map((s) => s.key);
   state.view = 'analyzing';
   state.progress = 0;
+  // 对照模式要跑两遍，进度里先说清楚，别让人以为卡住了
+  state.passLabel = langMode === 'bilingual' ? '准备中 · 中英各一遍' : '';
   // 进度列表按目录顺序列全，没勾的标成 skipped，用户能一眼看出「这次跳过了什么」
   state.stages = stageCatalog().map((s) => ({
     key: s.key,
@@ -2632,10 +2771,24 @@ async function runAnalysis(stages) {
 
   const t0 = Date.now();
   try {
-    await postSSE(`/api/projects/${state.project.id}/analyze`, { name: state.project.name, stages: want }, (evt) => {
+    await postSSE(
+      `/api/projects/${state.project.id}/analyze`,
+      { name: state.project.name, stages: want, langMode },
+      (evt) => {
       if (evt.type === 'start') {
         state.stages.forEach((s) => {
           if (s.status !== 'skipped') s.status = 'pending';
+        });
+        render();
+      } else if (evt.type === 'pass') {
+        // 对照模式要跑两遍，进度里标出来现在跑的是哪一遍
+        state.passLabel = `第 ${evt.index}/${evt.total} 遍 · ${evt.passLabel}`;
+        state.stages.forEach((s) => {
+          if (s.status !== 'skipped') {
+            s.status = 'pending';
+            s.ms = 0;
+            s.detail = '';
+          }
         });
         render();
       } else if (evt.type === 'stage') {

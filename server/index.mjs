@@ -560,18 +560,59 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
 
     // 前端弹窗里勾了哪些模式就只跑哪些；没传（老客户端）= 全跑
     const only = normalizeStages(req.body?.stages);
-    const result = await runFullAnalysis({
-      files,
-      cfg,
-      signal: controller.signal,
-      // 上传了上课录像 → 讲解稿以录像为准，这一轮不生成 narration
-      skipNarration: hasVideo,
-      only,
-      emit: (evt) => stream.send(evt),
-    });
+
+    // 生成语言：zh / en / bilingual（中英对照）
+    // 对照模式要跑两遍 —— 一遍中文一遍英文，分别存下来，前端上下叠着显示。
+    // 之所以跑两遍而不是让模型一次输出两种语言：所有阶段的 JSON 体积都会翻倍，
+    // 8000 token 的输出上限撑不住，尤其是逐页讲解稿这种本来就长的。
+    const langMode = ['zh', 'en', 'bilingual'].includes(req.body?.langMode) ? req.body.langMode : 'zh';
+    const passes = langMode === 'bilingual' ? ['zh', 'en'] : [langMode === 'en' ? 'en' : 'zh'];
+
+    const runPass = (lang, passLabel) =>
+      runFullAnalysis({
+        files,
+        cfg: { ...cfg, lang },
+        signal: controller.signal,
+        // 上传了上课录像 → 讲解稿以录像为准，这一轮不生成 narration
+        skipNarration: hasVideo,
+        only,
+        emit: (evt) => stream.send({ ...evt, lang, passLabel }),
+      });
+
+    let result = null;
+    let altEn = null;
+    for (let i = 0; i < passes.length; i++) {
+      const lang = passes[i];
+      if (passes.length > 1) {
+        stream.send({
+          type: 'pass',
+          lang,
+          index: i + 1,
+          total: passes.length,
+          passLabel: lang === 'zh' ? '中文' : 'English',
+        });
+      }
+      const out = await runPass(lang, lang === 'zh' ? '中文' : 'English');
+      if (i === 0) result = out;
+      else altEn = out;
+    }
 
     project.analysis = result;
     project.analysisStale = false;
+    // 对照模式：把英文那一遍的结果按阶段存起来，前端直接叠在中文下面
+    if (altEn) {
+      project.analysis.analysisEn = {
+        analysis: altEn.analysis,
+        examples: altEn.examples,
+        guide: altEn.guide,
+        narration: altEn.narration,
+        quiz: altEn.quiz,
+        lab: altEn.lab,
+        generatedAt: altEn.generatedAt,
+      };
+    } else {
+      delete project.analysis.analysisEn;
+    }
     persist(project);
     stream.send({ type: 'saved', project: slim(req, project) });
   } catch (err) {
@@ -592,9 +633,17 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
   const stage = String(req.body?.stage || '');
   try {
     const files = contextFor(project, cfg.maxInputChars);
-    const data = await rerunStage({ stage, files, cfg });
     project.analysis = project.analysis || {};
+    // 这个项目是「中英对照」生成的 → 重跑一节也要两种语言都补上，
+    // 否则重新生成的那一节会突然只剩中文，对照就断了
+    const bilingual = Boolean(project.analysis.analysisEn);
+    const data = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'zh' } });
     project.analysis[stage] = data;
+    if (bilingual) {
+      const en = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'en' } });
+      project.analysis.analysisEn = project.analysis.analysisEn || {};
+      project.analysis.analysisEn[stage] = en;
+    }
     persist(project);
     res.json({ ok: true, stage, data, project: slim(req, project) });
   } catch (err) {
