@@ -758,7 +758,7 @@ const TABS = [
   { id: 'overview', label: '课件分析', icon: 'chart' },
   { id: 'combine', label: '结合课件讲解', icon: 'wand' },
   { id: 'examples', label: '事例讲解', icon: 'bulb' },
-  { id: 'guide', label: '教学应用', icon: 'compass' },
+  { id: 'guide', label: '学习规划', icon: 'compass' },
   { id: 'narration', label: '逐页讲解', icon: 'mic' },
   { id: 'summary', label: '总结分析', icon: 'layers' },
   { id: 'quiz', label: '做题', icon: 'pen' },
@@ -1070,7 +1070,7 @@ function roleCatalog() {
   if (fromCfg.length) return fromCfg;
   // 兜底：拿不到就用内置的一份，保证面板永远能打开
   return [
-    { role: 'courseware', label: '课件', desc: '讲义、PPT、教材章节。', feeds: '课件分析 · 事例讲解 · 教学应用 · 逐页讲解' },
+    { role: 'courseware', label: '课件', desc: '讲义、PPT、教材章节。', feeds: '课件分析 · 事例讲解 · 学习规划 · 逐页讲解' },
     { role: 'lab', label: '实验指导', desc: '实验手册、Lab sheet。', feeds: '做 Lab · 结合课件讲解' },
     { role: 'exercise', label: '习题 / 作业', desc: 'Tutorial、Assignment、Past paper。', feeds: '做题 · 结合课件讲解' },
     { role: 'solution', label: '标准答案', desc: '老师发的答案册 / 题解。', feeds: '结合课件讲解（权威依据）' },
@@ -1516,14 +1516,14 @@ function renderBody() {
     body.innerHTML = `
       <div class="empty">
         <div class="big">${icon('book', 46)}</div>
-        <h2>把课件交给我，我给你一份能直接上课的讲解方案</h2>
+        <h2>把课件交给我，我陪你把这门课学会</h2>
         <p>支持 PDF、PPTX、DOCX、TXT、Markdown、CSV、XLSX 等格式，可一次上传多个文件。</p>
         <ol>
           <li>把课件文件拖进左侧上传区</li>
           <li>点击「开始讲解分析」</li>
-          <li>得到 <b>课件内容分析</b>、<b>事例讲解</b>、<b>教学应用方案</b>、<b>逐页讲解稿</b>、<b>练习题</b>、<b>实验（Lab）</b></li>
-          <li>用「全屏讲解模式」照着讲；学生可在「做题」「做lab」里直接作答并得到批改</li>
-          <li>导出 Markdown 改教案</li>
+          <li>得到 <b>课件分析</b>、<b>事例讲解</b>、<b>学习规划</b>、<b>逐页讲解</b>、<b>总结分析</b>、<b>练习题</b>、<b>实验（Lab）</b></li>
+          <li>用「全屏讲解模式」边看页面边听讲解；可以在「做题」「做 lab」里直接作答并得到批改</li>
+          <li>导出 Markdown 存成自己的笔记</li>
         </ol>
       </div>`;
     return;
@@ -1534,7 +1534,7 @@ function renderBody() {
         <div class="big">${icon('checkCircle', 46)}</div>
         <h2>已就绪：${state.project.files.length} 个文件</h2>
         <p>共提取到 ${state.project.files.reduce((n, f) => n + (f.chars || 0), 0).toLocaleString()} 字内容。</p>
-        <p>点击左下角 <b>「开始讲解分析」</b>，我会读完整份课件，产出内容分析、事例讲解、教学应用方案和逐页讲解稿。</p>
+        <p>点击左下角 <b>「开始讲解分析」</b>，我会读完整份课件，产出内容分析、事例讲解、学习规划和逐页讲解稿。</p>
       </div>`;
     return;
   }
@@ -1729,7 +1729,7 @@ function stageCatalog() {
   return [
     { key: 'analysis', label: '课件分析', desc: '通读材料，讲清结构、重点难点，列出核心概念。' },
     { key: 'examples', label: '事例讲解', desc: '把例题、案例拆成题目 → 分步 → 通用方法 → 易错点。' },
-    { key: 'guide', label: '教学应用', desc: '生成课堂流程、时间分配、互动设计。' },
+    { key: 'guide', label: '学习规划', desc: '给学习者一份学习规划：先学什么、每部分花多久、怎么自测。' },
     { key: 'narration', label: '逐页讲解稿', desc: '每一页写一段可以照着念的讲稿。' },
     { key: 'quiz', label: '练习题', desc: '整理出可以做的题，附答案与解析。' },
     { key: 'lab', label: '做 Lab', desc: '把实验整理成可以照着做的分步实验。' },
@@ -2144,7 +2144,7 @@ function renderExamples(ex) {
   return (
     `<div class="card" style="margin-bottom:18px">
       <h3>共找到 ${examples.length} 个可讲的事例</h3>
-      <p style="margin:0;color:var(--text-2);font-size:13.5px">每个事例都拆成了「题目 → 分步讲解 → 通用方法 → 易错点 → 板书」，可以直接照着讲。</p>
+      <p style="margin:0;color:var(--text-2);font-size:13.5px">每个事例都拆成了「题目 → 分步讲解 → 通用方法 → 易错点 → 回顾」，可以照着一步步学。</p>
     </div>` +
     examples
       .map((e, i) => {
@@ -2197,7 +2197,7 @@ function renderExamples(ex) {
         ${e.answer ? `<div class="answer"><b>答案 / 结论：</b>${esc(e.answer)}</div>` : ''}
         ${arr(e.keyPoints).length ? `<div style="margin-top:14px"><b style="font-size:13px">关键点</b>${listHtml(e.keyPoints)}</div>` : ''}
         ${arr(e.pitfalls).length ? `<div class="note-box"><b>易错点</b>${listHtml(e.pitfalls, '')}</div>` : ''}
-        ${e.board ? `<div class="board-box"><span class="lbl">板书</span>${esc(e.board)}</div>` : ''}
+        ${e.board ? `<div class="board-box"><span class="lbl">关键式子</span>${esc(e.board)}</div>` : ''}
       </div>
     </div>`;
       })
@@ -2233,12 +2233,12 @@ function summaryTable(t, i) {
 }
 
 /** 思维导图：用 CSS 画成「主干 + 分支」的树，静态版和打印都正常 */
-function summaryMindmap(mm) {
+function summaryMindmap(mm, { compact = false } = {}) {
   const branches = arr(mm?.branches);
   if (!branches.length) return '';
   const svg = (d) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-  return `<div class="mindmap">
+  return `<div class="mindmap ${compact ? 'compact' : ''}">
     <div class="mm-root">
       <span class="mm-root-dot">${svg('<circle cx="12" cy="12" r="3"/>')}</span>
       <b>${esc(mm.root || '总主题')}</b>
@@ -2251,14 +2251,14 @@ function summaryMindmap(mm) {
               <span class="mm-branch-idx">${i + 1}</span>
               <span class="mm-branch-name">${esc(b.name || '')}</span>
             </div>
-            ${b.note ? `<div class="mm-branch-note">${esc(b.note)}</div>` : ''}
+            ${!compact && b.note ? `<div class="mm-branch-note">${esc(b.note)}</div>` : ''}
             ${
               arr(b.children).length
                 ? `<div class="mm-leaves">${b.children
                     .map(
                       (c) => `<div class="mm-leaf">
                         <span class="mm-leaf-name">${esc(c.name || c)}</span>
-                        ${c && c.note ? `<span class="mm-leaf-note">${esc(c.note)}</span>` : ''}
+                        ${!compact && c && c.note ? `<span class="mm-leaf-note">${esc(c.note)}</span>` : ''}
                       </div>`,
                     )
                     .join('')}</div>`
@@ -2294,15 +2294,14 @@ function renderSummary(sm) {
     ${sm.bigPicture ? `<p style="margin:16px 0 0;font-size:14.5px;line-height:1.95;color:rgba(255,255,255,.9)">${esc(sm.bigPicture)}</p>` : ''}
   </div>`;
 
+  // 思维导图只是个点缀：缩成一张小卡放在最上面，不占章节编号，
+  // 真正把知识讲透靠的是下面的知识点和表格
   const mapCard = arr(sm.mindmap?.branches).length
-    ? `<div class="card"><h3><span class="num">1</span>思维导图 · 知识的骨架
-        <span class="spacer"></span>
-        <span style="font-weight:400;color:var(--ink-4);font-size:12px">先看这张图建立全局印象</span>
-      </h3>${summaryMindmap(sm.mindmap)}</div>`
+    ? `<div class="mm-aside">${summaryMindmap(sm.mindmap, { compact: true })}</div>`
     : '';
 
   const conceptCard = concepts.length
-    ? `<div class="card"><h3><span class="num">2</span>知识点逐个讲透</h3>
+    ? `<div class="card"><h3><span class="num">1</span>知识点逐个讲透</h3>
         <div class="sum-concepts">${concepts
           .map((c, i) => {
             const d = dnd({
@@ -2323,14 +2322,14 @@ function renderSummary(sm) {
     : '';
 
   const tableCard = tables.length
-    ? `<div class="card"><h3><span class="num">3</span>对照表
+    ? `<div class="card"><h3><span class="num">2</span>对照表
         <span class="spacer"></span>
         <span style="font-weight:400;color:var(--ink-4);font-size:12px">凡是能摆在一起比的，都用表来看</span>
       </h3>${tables.map(summaryTable).join('')}</div>`
     : '';
 
   const confCard = confusions.length
-    ? `<div class="card"><h3><span class="num">4</span>最容易混的地方</h3>
+    ? `<div class="card"><h3><span class="num">3</span>最容易混的地方</h3>
         <div class="sum-confusions">${confusions
           .map(
             (c) => `<div class="sum-confusion">
@@ -2343,7 +2342,7 @@ function renderSummary(sm) {
     : '';
 
   const pathCard = path.length
-    ? `<div class="card"><h3><span class="num">5</span>从零开始的顺序</h3>
+    ? `<div class="card"><h3><span class="num">4</span>从零开始的顺序</h3>
         <div class="sum-path">${path
           .map(
             (s, i) => `<div class="sp-step">
@@ -2359,7 +2358,7 @@ function renderSummary(sm) {
     : '';
 
   const checkCard = checks.length
-    ? `<div class="card"><h3><span class="num">6</span>自测
+    ? `<div class="card"><h3><span class="num">5</span>自测
         <span class="spacer"></span>
         <span style="font-weight:400;color:var(--ink-4);font-size:12px">答不上来就回去看对应的知识点</span>
       </h3>
@@ -2379,19 +2378,21 @@ function renderSummary(sm) {
   return hero + mapCard + conceptCard + tableCard + confCard + pathCard + checkCard;
 }
 
-/* --------------------------- 3. 教学应用 --------------------------- */
+/* --------------------------- 3. 学习规划 --------------------------- */
 
 function renderGuide(g) {
-  if (!g) return `<div class="note-box">教学应用方案没有生成成功，可以重试。</div>`;
-  const flow = arr(g.lessonFlow);
+  if (!g) return `<div class="note-box">学习规划没有生成成功，可以重试。</div>`;
+  // 兼容两代数据：新的是 studyFlow（学习者视角），老项目里还存着 lessonFlow（教案视角）
+  const isStudy = arr(g.studyFlow).length > 0;
+  const flow = isStudy ? arr(g.studyFlow) : arr(g.lessonFlow);
   const totalMin = flow.reduce((n, f) => n + (Number(f.minutes) || 0), 0);
 
   const flowCard = flow.length
     ? `<div class="card">
-        <h3><span class="num">1</span>课堂流程${totalMin ? `（合计约 ${totalMin} 分钟）` : ''}</h3>
+        <h3><span class="num">1</span>${isStudy ? '学习步骤' : '课堂流程'}${totalMin ? `（合计约 ${totalMin} 分钟）` : ''}</h3>
         <div style="overflow-x:auto">
         <table class="flow-table">
-          <thead><tr><th>环节</th><th>用时</th><th>课件位置</th><th>教师做什么</th><th>学生做什么</th><th>课件怎么用</th></tr></thead>
+          <thead><tr><th>阶段</th><th>用时</th><th>看哪里</th>${isStudy ? '<th>做什么</th><th>容易卡住</th><th>过关标准</th>' : '<th>教师做什么</th><th>学生做什么</th><th>课件怎么用</th>'}</tr></thead>
           <tbody>
             ${flow
               .map(
@@ -2399,94 +2400,83 @@ function renderGuide(g) {
               <td class="phase">${esc(f.phase)}</td>
               <td class="mins">${esc(f.minutes ?? '—')}′</td>
               <td class="mins">${esc(f.location || '—')}</td>
-              <td>${esc(f.teacherAction || '—')}</td>
-              <td>${esc(f.studentAction || '—')}</td>
-              <td>${esc(f.howToUseCourseware || '—')}</td>
+              ${isStudy
+                ? `<td>${esc(f.whatToDo || '—')}</td><td>${esc(f.watchOut || '—')}</td><td>${esc(f.checkpoint || '—')}</td>`
+                : `<td>${esc(f.teacherAction || '—')}</td><td>${esc(f.studentAction || '—')}</td><td>${esc(f.howToUseCourseware || '—')}</td>`}
             </tr>`,
               )
               .join('')}
           </tbody>
         </table>
         </div>
-        ${
-          flow.some((f) => f.script)
-            ? `<div style="margin-top:16px"><b style="font-size:13px">${icon('mic', 13)} 教师口播讲稿（可直接照着念）</b>
-                ${flow
-                  .filter((f) => f.script)
-                  .map(
-                    (f) => `<div class="stem" style="margin-top:10px;margin-bottom:0">
-                    <span class="lbl">${esc(f.phase)}${f.location ? ` · ${esc(f.location)}` : ''}</span>${esc(f.script)}</div>`,
-                  )
-                  .join('')}
-              </div>`
-            : ''
-        }
+        ${flow.some((f) => f.script)
+          ? `<div style="margin-top:16px"><b style="font-size:13px">${icon('mic', 13)} 讲解稿（可直接照着念）</b>
+              ${flow.filter((f) => f.script).map((f) => `<div class="stem" style="margin-top:10px;margin-bottom:0"><span class="lbl">${esc(f.phase)}${f.location ? ` · ${esc(f.location)}` : ''}</span>${esc(f.script)}</div>`).join('')}
+            </div>`
+          : ''}
       </div>`
     : '';
 
-  const questions = arr(g.questions).length
+  const qList = arr(g.selfQuestions).length ? arr(g.selfQuestions) : arr(g.questions);
+  const qIsStudy = arr(g.selfQuestions).length > 0;
+  const questions = qList.length
     ? `<div class="card">
-        <h3><span class="num">2</span>课堂提问设计</h3>
-        ${g.questions
-          .map(
-            (q, i) => `<div class="qa-item">
+        <h3><span class="num">2</span>${qIsStudy ? '学到这儿应该能回答' : '课堂提问设计'}</h3>
+        ${qList.map((q, i) => `<div class="qa-item">
             <div class="q"><span class="n">${i + 1}</span><span>${esc(q.question)}</span></div>
-            <div class="a">参考回答：${esc(q.answer || '—')}</div>
-            <div class="p">目的：${esc(q.purpose || '—')}${q.location ? ` ｜ 对应 ${esc(q.location)}` : ''}</div>
-          </div>`,
-          )
-          .join('')}
+            <div class="a">${qIsStudy ? '参考答案' : '参考回答'}：${esc(q.answer || '—')}</div>
+            <div class="p">${qIsStudy ? '检验' : '目的'}：${esc(q.purpose || '—')}${q.location ? ` ｜ 对应 ${esc(q.location)}` : ''}</div>
+          </div>`).join('')}
       </div>`
     : '';
 
-  const activities = arr(g.activities).length
+  const practice = arr(g.practice).length ? arr(g.practice) : arr(g.activities);
+  const activities = practice.length
     ? `<div class="card">
-        <h3><span class="num">3</span>课堂活动</h3>
-        ${g.activities
-          .map(
-            (a) => `<div class="concept">
+        <h3><span class="num">3</span>${arr(g.practice).length ? '动手练习' : '课堂活动'}</h3>
+        ${practice.map((a) => `<div class="concept">
             <b>${esc(a.name)}</b> <span style="font-size:12px;color:var(--text-3)">${esc(a.duration || '')}</span>
             ${arr(a.steps).length ? `<div style="margin-top:8px">${listHtml(a.steps, '')}</div>` : ''}
-            ${a.materials ? `<p style="font-size:12.5px;color:var(--text-3)">材料：${esc(a.materials)}</p>` : ''}
-          </div>`,
-          )
-          .join('')}
+            ${a.materials ? `<p style="font-size:12.5px;color:var(--text-3)">${arr(g.practice).length ? '需要准备' : '材料'}：${esc(a.materials)}</p>` : ''}
+          </div>`).join('')}
       </div>`
     : '';
 
-  const hw = g.homework
+  const hwData = g.tasks || g.homework;
+  const hw = hwData
     ? `<div class="card">
-        <h3><span class="num">4</span>作业布置</h3>
+        <h3><span class="num">4</span>${g.tasks ? '要动手做的事' : '作业布置'}</h3>
         <div class="grid-2">
-          <div><b style="font-size:13px;color:var(--ok)">必做</b>${listHtml(g.homework.basic)}</div>
-          <div><b style="font-size:13px;color:var(--warn)">选做 / 拓展</b>${listHtml(g.homework.advanced)}</div>
+          <div><b style="font-size:13px;color:var(--ok)">必做</b>${listHtml(hwData.basic)}</div>
+          <div><b style="font-size:13px;color:var(--warn)">选做 / 拓展</b>${listHtml(hwData.advanced)}</div>
         </div>
       </div>`
     : '';
 
-  const diff = g.differentiation
+  const diffData = g.byLevel || g.differentiation;
+  const diff = diffData
     ? `<div class="card">
-        <h3><span class="num">5</span>分层教学</h3>
-        <div class="concept"><b>基础薄弱的学生</b><p>${esc(g.differentiation.struggling || '—')}</p></div>
-        <div class="concept"><b>中等水平的学生</b><p>${esc(g.differentiation.average || '—')}</p></div>
-        <div class="concept"><b>学有余力的学生</b><p>${esc(g.differentiation.advanced || '—')}</p></div>
+        <h3><span class="num">5</span>${g.byLevel ? '不同基础怎么学' : '分层教学'}</h3>
+        <div class="concept"><b>基础薄弱</b><p>${esc(diffData.struggling || '—')}</p></div>
+        <div class="concept"><b>正常进度</b><p>${esc(diffData.average || '—')}</p></div>
+        <div class="concept"><b>学有余力</b><p>${esc(diffData.advanced || '—')}</p></div>
       </div>`
     : '';
 
   const assessment = arr(g.assessment).length
-    ? `<div class="card"><h3><span class="num">6</span>学习效果检验</h3>${listHtml(g.assessment)}</div>`
+    ? `<div class="card"><h3><span class="num">6</span>${g.byLevel ? '怎么确认学会了' : '学习效果检验'}</h3>${listHtml(g.assessment)}</div>`
     : '';
 
   const pitfalls = arr(g.pitfalls).length
-    ? `<div class="card"><h3><span class="num">7</span>使用这份课件的注意事项</h3>${listHtml(g.pitfalls)}</div>`
+    ? `<div class="card"><h3><span class="num">7</span>${g.byLevel ? '容易卡住的地方' : '使用这份课件的注意事项'}</h3>${listHtml(g.pitfalls)}</div>`
     : '';
 
   const tips = arr(g.tips).length
-    ? `<div class="card"><h3><span class="num">8</span>提效技巧</h3><div class="pill-row">${g.tips.map((t) => `<span class="pill">${esc(t)}</span>`).join('')}</div></div>`
+    ? `<div class="card"><h3><span class="num">8</span>${g.byLevel ? '学习技巧' : '提效技巧'}</h3><div class="pill-row">${g.tips.map((t) => `<span class="pill">${esc(t)}</span>`).join('')}</div></div>`
     : '';
 
   const positioning = g.positioning
-    ? `<div class="card"><h3>${icon('pin', 14)} 这份课件的定位</h3><p style="margin:0;font-size:13.5px;color:var(--text-2)">${esc(g.positioning)}</p></div>`
+    ? `<div class="card"><h3>${icon('pin', 14)} ${g.byLevel ? '这份材料在你学习里的位置' : '这份课件的定位'}</h3><p style="margin:0;font-size:13.5px;color:var(--text-2)">${esc(g.positioning)}</p></div>`
     : '';
 
   return positioning + flowCard + questions + activities + hw + diff + assessment + pitfalls + tips;
@@ -2553,8 +2543,8 @@ function renderNarration(n) {
             s.scriptEn ? `英文原话：${s.scriptEn}` : '',
             `讲解稿：${s.script || ''}`,
             arr(s.keyPoints).length ? `要点：${s.keyPoints.join('；')}` : '',
-            s.askClass ? `提问：${s.askClass}` : '',
-            s.board ? `板书：${s.board}` : '',
+            s.askClass ? `自问：${s.askClass}` : '',
+            s.board ? `关键式子：${s.board}` : '',
           ]
             .filter(Boolean)
             .join('\n'),
@@ -2572,8 +2562,8 @@ function renderNarration(n) {
             ${s.scriptEn ? `<p style="margin:0 0 8px;font-size:13.5px;line-height:1.85;color:var(--ink-2)">${esc(s.scriptEn)}</p>
               <p style="margin:0 0 12px;font-size:14px;line-height:1.9">${esc(s.script || '')}</p>` : `<p style="margin:0 0 12px;font-size:14px;line-height:1.9">${esc(s.script || '')}</p>`}
             ${arr(s.keyPoints).length ? `<div class="pill-row" style="margin-bottom:10px">${s.keyPoints.map((k) => `<span class="pill">${esc(k)}</span>`).join('')}</div>` : ''}
-            ${s.askClass ? `<div class="note-box">${icon('help', 13)} 提问：${esc(s.askClass)}</div>` : ''}
-            ${s.board ? `<div class="board-box"><span class="lbl">板书</span>${esc(s.board)}</div>` : ''}
+            ${s.askClass ? `<div class="note-box">${icon('help', 13)} 自问：${esc(s.askClass)}</div>` : ''}
+            ${s.board ? `<div class="board-box"><span class="lbl">关键式子</span>${esc(s.board)}</div>` : ''}
             ${s.transition ? `<p style="margin:12px 0 0;color:var(--ink-3);font-size:12.5px;font-style:italic">过渡：${esc(s.transition)}</p>` : ''}
           </div>
         </div>
@@ -2720,7 +2710,7 @@ function renderPresenter() {
       </div>
       <div class="presenter-main">
         <div class="presenter-col">
-          <div class="col-label">照着讲 · 讲解稿${s.scriptEn ? '（上：英文原话　下：中文翻译）' : ''}</div>
+          <div class="col-label">讲解稿${s.scriptEn ? '（上：英文原话　下：中文翻译）' : ''}</div>
           ${
             s.scriptEn
               ? `<div class="script-text en">${esc(s.scriptEn)}</div>
@@ -2730,10 +2720,10 @@ function renderPresenter() {
           }
           ${
             arr(s.keyPoints).length
-              ? `<div class="kp"><h5>必须让学生记住</h5><ul class="clean">${s.keyPoints.map((k) => `<li>${esc(k)}</li>`).join('')}</ul></div>`
+              ? `<div class="kp"><h5>必须记住</h5><ul class="clean">${s.keyPoints.map((k) => `<li>${esc(k)}</li>`).join('')}</ul></div>`
               : ''
           }
-          ${s.askClass ? `<div class="ask">${icon('help', 13)} 提问：${esc(s.askClass)}</div>` : ''}
+          ${s.askClass ? `<div class="ask">${icon('help', 13)} 自问：${esc(s.askClass)}</div>` : ''}
           ${s.board ? `<div class="board-dark">${esc(s.board)}</div>` : ''}
           ${s.transition ? `<div class="transition-row">过渡：${esc(s.transition)}</div>` : ''}
         </div>
@@ -2801,7 +2791,7 @@ function renderChat() {
     '用一句话概括这份课件的核心内容',
     '这份课件里最难的知识点是哪个？为什么难？',
     '帮我出一道考察本课件重点的随堂测题，并给答案',
-    '如果学生只有 10 分钟复习，应该看哪几页？',
+    '如果我只有 10 分钟复习，应该看哪几页？',
   ];
   $('#tabBody').innerHTML = `
     <div class="chat-wrap">

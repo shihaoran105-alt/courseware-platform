@@ -5,7 +5,7 @@
  * 所以单独放这里，避免三处各写一份然后慢慢走样。
  *
  * 推荐的思路：看这个项目里有哪些类别的材料，只推荐真的用得上的模式 ——
- * 只传了一份实验指导，就没必要硬生成「教学应用方案」和「练习题」。
+ * 只传了一份实验指导，就没必要硬生成「学习规划」和「练习题」。
  */
 import { classifyRole } from './roles.js';
 
@@ -31,10 +31,10 @@ export const STAGE_CATALOG = [
   },
   {
     key: 'guide',
-    label: '教学应用',
-    labelEn: 'Teaching plan',
-    desc: '生成课堂流程、时间分配、互动设计和课件怎么用。',
-    descEn: 'Produces a lesson flow with timings, interaction design and how to use the courseware in class.',
+    label: '学习规划',
+    labelEn: 'Study plan',
+    desc: '给学习者一份「这份材料该怎么学」的规划：先学什么、每部分花多久、怎么自测。',
+    descEn: 'A study plan for the learner: what to study first, how long to spend, and how to check yourself.',
     tab: 'guide',
     basedOn: ['courseware'],
   },

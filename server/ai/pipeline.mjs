@@ -1,5 +1,5 @@
 /**
- * 分析流水线：课件 → 内容分析 → 事例讲解 → 教学应用方案 → 逐页讲解稿 → 练习题 → Lab
+ * 分析流水线：课件 → 读懂材料 → 事例讲解 → 学习规划 → 逐页讲解 → 总结分析 → 练习题 → Lab
  *
  * 每个阶段独立容错：某一阶段失败不会让整体失败，前端会看到哪一步出错。
  */
@@ -159,7 +159,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
   const stages = [
     {
       key: 'analysis',
-      label: '分析课件内容',
+      label: '读懂这份材料',
       weight: 30,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
@@ -174,7 +174,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     },
     {
       key: 'examples',
-      label: '讲解课件中的事例',
+      label: '讲透其中的事例',
       weight: 30,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
@@ -189,7 +189,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     },
     {
       key: 'guide',
-      label: '生成教学应用方案',
+      label: '制定学习规划',
       weight: 25,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
@@ -204,7 +204,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     },
     {
       key: 'narration',
-      label: '撰写逐页讲解稿',
+      label: '逐页讲解',
       weight: 12,
       run: () => generateNarration({ files, cfg, emit, signal, onUsage: addUsage }),
     },
@@ -225,7 +225,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     },
     {
       key: 'quiz',
-      label: '整理练习题',
+      label: '出一套练习题',
       weight: 10,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
@@ -281,7 +281,7 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     emit({
       type: 'stage',
       stage: 'narration',
-      label: '撰写逐页讲解稿',
+      label: '逐页讲解',
       status: 'done',
       ms: 0,
       progress: 0,
