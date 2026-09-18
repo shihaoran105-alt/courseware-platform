@@ -61,7 +61,7 @@ import { rendererState } from './config.mjs';
 import { complete } from './ai/client.mjs';
 import { toMarkdown } from './export.mjs';
 import { buildPreviewPdf, canRender, mediaName } from './render.mjs';
-import { classifyRole, isDocKind, matchSolution, roleLabel } from './roles.mjs';
+import { classifyRole, isDocKind, isValidRole, matchSolution, ROLE_CATALOG, roleLabel } from './roles.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -206,6 +206,8 @@ app.get('/api/config', (req, res) => {
   res.json({
     ...publicConfig(),
     hasDemo,
+    // 类别清单由服务端下发，前端「改类别」面板和静态版共用同一份定义
+    roles: ROLE_CATALOG,
     stt: sttState(),
     ffmpeg: ffmpegState(),
     renderer: rendererState(),
@@ -418,6 +420,8 @@ app.post('/api/projects/:id/upload', (req, res, next) => {
         kind: result.kind,
         role,
         roleLabel: roleLabel(role),
+        // auto = 由文件名自动判断；manual = 用户自己点选过，启动时不许覆盖
+        roleSource: 'auto',
         size: f.size,
         chars: text.length,
         meta: result.meta || {},
@@ -472,6 +476,39 @@ app.delete('/api/projects/:id/files/:fileId', async (req, res) => {
 });
 
 /** 查看某个文件抽取到的文字（透明化，便于老师核对） */
+/**
+ * 改一份材料的类别（课件 / 实验指导 / 习题 / 标准答案 / 上课录像 / 其他）。
+ *
+ * role 传 'auto' 表示「改回按文件名自动识别」。
+ * 改完把整个项目返回，前端直接拿新的 shape 重画 —— 模式排列会跟着变。
+ */
+app.patch('/api/projects/:id/files/:fileId', (req, res) => {
+  const project = editableProjectOr404(req, res);
+  if (!project) return;
+  const file = (project.files || []).find((f) => f.id === req.params.fileId);
+  if (!file) {
+    res.status(404).json({ error: '文件不存在' });
+    return;
+  }
+  const want = String(req.body?.role || '').trim();
+  if (!isValidRole(want)) {
+    res.status(400).json({ error: `不认识的类别：${want}` });
+    return;
+  }
+  if (want === 'auto') {
+    file.role = classifyRole(file.originalName, file.kind);
+    file.roleSource = 'auto';
+  } else {
+    file.role = want;
+    file.roleSource = 'manual';
+  }
+  file.roleLabel = roleLabel(file.role);
+  // 类别变了，之前的分析结果就不再对应，提示前端可以重跑
+  if (project.analysis) project.analysisStale = true;
+  persist(project);
+  res.json({ ok: true, project: slim(req, project) });
+});
+
 app.get('/api/projects/:id/files/:fileId/text', (req, res) => {
   const project = readableProjectOr404(req, res);
   if (!project) return;
@@ -1191,16 +1228,25 @@ async function backfillProjects() {
   for (const project of jobs) {
     let changed = false;
     for (const file of project.files || []) {
-      // 角色完全由文件名推导，没有手动覆盖，所以每次启动都重算一遍：
-      // 这样新增的规则（比如「带 solution 字样 = 标准答案」）能应用到老项目上。
-      const role = classifyRole(file.originalName, file.kind);
-      if (file.role !== role) {
-        file.role = role;
-        file.roleLabel = roleLabel(role);
-        changed = true;
-      } else if (!file.roleLabel) {
-        file.roleLabel = roleLabel(role);
-        changed = true;
+      // 没被用户手动改过的，每次启动按文件名重算一遍 ——
+      // 这样新加的规则（比如「带 solution 字样 = 标准答案」）能作用到老项目上。
+      // 用户点选过的（roleSource === 'manual'）绝对不覆盖。
+      if (file.roleSource === 'manual') {
+        if (!file.roleLabel) {
+          file.roleLabel = roleLabel(file.role);
+          changed = true;
+        }
+      } else {
+        const role = classifyRole(file.originalName, file.kind);
+        if (file.role !== role || file.roleSource !== 'auto') {
+          file.role = role;
+          file.roleLabel = roleLabel(role);
+          file.roleSource = 'auto';
+          changed = true;
+        } else if (!file.roleLabel) {
+          file.roleLabel = roleLabel(role);
+          changed = true;
+        }
       }
       const ext = (file.originalName.split('.').pop() || '').toLowerCase();
       if (isDocKind(file.kind) && !file.previewPdf && canRender(ext)) {

@@ -25,7 +25,7 @@ import { PROVIDERS, DEFAULT_KEY_URL } from './providers.js';
 import { ACCEPT_HINT, buildContext, classify, extractFile, fileToText } from './extract.js';
 import { allProjects, currentId, delProject, getProject, putProject, setCurrentId, storageMode } from './store.js';
 // 角色判定和服务器版共用同一份规则，避免两边行为不一致
-import { classifyRole, matchSolution, projectShape, roleLabel } from './roles.js';
+import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, roleLabel } from './roles.js';
 
 const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model' };
 const lsGet = (k) => {
@@ -132,6 +132,7 @@ function slim(project) {
       kind: f.kind,
       role: f.role || classifyRole(f.originalName, f.kind),
       roleLabel: f.roleLabel || roleLabel(f.role || classifyRole(f.originalName, f.kind)),
+      roleSource: f.roleSource || 'auto',
       size: f.size,
       chars: f.chars,
       meta: f.meta,
@@ -252,6 +253,7 @@ export async function upload(_projectId, files, onProgress) {
         kind: result.kind,
         role,
         roleLabel: roleLabel(role),
+        roleSource: 'auto',
         size: file.size,
         chars: text.length,
         meta: result.meta || {},
@@ -325,6 +327,8 @@ export async function api(path, options = {}) {
       baseUrl: lsGet(LS.base) || DEFAULT_BASE,
       maxInputChars: 90000,
       providers: PROVIDERS,
+      // 类别清单和服务器版共用同一份定义
+      roles: ROLE_CATALOG,
       keyUrl: DEFAULT_KEY_URL,
       siteName: '课件讲解平台',
       storage: storageMode(),
@@ -460,6 +464,27 @@ export async function api(path, options = {}) {
     project.dockChat = [];
     await save(project);
     return { ok: true, dockChat: [] };
+  }
+
+  // 改一份材料的类别（和服务器版同一套规则）
+  if ((m = p.match(/^\/api\/projects\/([^/]+)\/files\/([^/]+)$/)) && method === 'PATCH') {
+    const project = await getProject(m[1]);
+    if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
+    const file = (project.files || []).find((f) => f.id === m[2]);
+    if (!file) throw Object.assign(new Error('文件不存在'), { status: 404 });
+    const want = String(body.role || '').trim();
+    if (!isValidRole(want)) throw Object.assign(new Error(`不认识的类别：${want}`), { status: 400 });
+    if (want === 'auto') {
+      file.role = classifyRole(file.originalName, file.kind);
+      file.roleSource = 'auto';
+    } else {
+      file.role = want;
+      file.roleSource = 'manual';
+    }
+    file.roleLabel = roleLabel(file.role);
+    if (project.analysis) project.analysisStale = true;
+    await save(project);
+    return { ok: true, project: slim(project) };
   }
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/files\/([^/]+)\/text$/))) {

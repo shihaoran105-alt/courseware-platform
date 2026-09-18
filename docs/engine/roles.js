@@ -55,9 +55,62 @@ export function roleLabel(role) {
       exercise: '习题 / 作业',
       courseware: '课件',
       video: '上课录像',
-      other: '附件',
-    }[role] || '附件'
+      other: '其他',
+    }[role] || '其他'
   );
+}
+
+/**
+ * 类别清单，给「点一下自己改类别」的选择面板用。
+ *
+ * 放在这里是想让服务端、静态版、前端共用同一份定义 ——
+ * 否则以后加一个类别就要改三个地方，迟早漏一个。
+ *   feeds: 这一类的材料会喂给哪些模式，选择面板里要如实告诉用户。
+ */
+export const ROLE_CATALOG = [
+  {
+    role: 'courseware',
+    label: '课件',
+    desc: '讲义、PPT、教材章节。作为讲解的主体和「课件原文」的来源。',
+    feeds: '课件分析 · 事例讲解 · 教学应用 · 逐页讲解 · 课件原文截图',
+  },
+  {
+    role: 'lab',
+    label: '实验指导',
+    desc: '实验手册、Lab sheet。用来生成可以照着做的「做 Lab」。',
+    feeds: '做 Lab · 结合课件讲解 · 逐页讲解',
+  },
+  {
+    role: 'exercise',
+    label: '习题 / 作业',
+    desc: 'Tutorial、Assignment、Past paper。用来出题和讲题。',
+    feeds: '做题 · 结合课件讲解 · 逐页讲解',
+  },
+  {
+    role: 'solution',
+    label: '标准答案',
+    desc: '老师发的答案册 / 题解。讲解时会以它为准，并标注答案出处。',
+    feeds: '结合课件讲解（权威依据）· 出题时的参考答案',
+  },
+  {
+    role: 'video',
+    label: '上课录像',
+    desc: '课堂录屏 / 录音。转写成文字后按课件页对齐成讲解稿。',
+    feeds: '逐页讲解（用录像里的真实讲法）',
+  },
+  {
+    role: 'other',
+    label: '其他',
+    desc: '参考资料、数据表、附件。只作为背景内容参与分析，不单独占一个模式。',
+    feeds: '课件分析时的背景材料',
+  },
+];
+
+/** 合法的类别（含 auto，表示交给文件名自动判断） */
+export const ROLE_IDS = [...ROLES, 'auto'];
+
+export function isValidRole(role) {
+  return ROLE_IDS.includes(String(role));
 }
 
 /**

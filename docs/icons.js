@@ -31,6 +31,7 @@ const PATHS = {
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
   left: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
   right: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3"/><path d="m16 7 2.5 2.5"/><path d="m19 4 1.5 1.5"/>',
   play: '<path d="M6 4.5v15l13-7.5Z"/>',
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/>',

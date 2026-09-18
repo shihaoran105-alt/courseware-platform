@@ -301,6 +301,8 @@ export function slimProject(project, sid = '') {
       kind: f.kind,
       role: f.role || classifyRole(f.originalName, f.kind),
       roleLabel: f.roleLabel || roleLabel(f.role || classifyRole(f.originalName, f.kind)),
+      // manual = 用户自己点选过，界面上要能看出来并支持改回自动
+      roleSource: f.roleSource || 'auto',
       size: f.size,
       chars: f.chars,
       meta: f.meta,

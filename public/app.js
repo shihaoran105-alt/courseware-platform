@@ -873,6 +873,98 @@ function ensureDndWiring() {
   }
 }
 
+/** 能改的文件类别（服务端通过 /api/config 下发，静态版从共享的 roles.js 拿） */
+function roleCatalog() {
+  const fromCfg = arr(state.config?.roles);
+  if (fromCfg.length) return fromCfg;
+  // 兜底：拿不到就用内置的一份，保证面板永远能打开
+  return [
+    { role: 'courseware', label: '课件', desc: '讲义、PPT、教材章节。', feeds: '课件分析 · 事例讲解 · 教学应用 · 逐页讲解' },
+    { role: 'lab', label: '实验指导', desc: '实验手册、Lab sheet。', feeds: '做 Lab · 结合课件讲解' },
+    { role: 'exercise', label: '习题 / 作业', desc: 'Tutorial、Assignment、Past paper。', feeds: '做题 · 结合课件讲解' },
+    { role: 'solution', label: '标准答案', desc: '老师发的答案册 / 题解。', feeds: '结合课件讲解（权威依据）' },
+    { role: 'video', label: '上课录像', desc: '课堂录屏 / 录音。', feeds: '逐页讲解' },
+    { role: 'other', label: '其他', desc: '参考资料、数据表、附件。', feeds: '课件分析时的背景材料' },
+  ];
+}
+
+/**
+ * 「这份材料算什么」的选择面板。
+ *
+ * 自动识别的结果不一定对（比如 `Week 3 Lab.pdf` 其实是课件），
+ * 所以每个类别都写清楚它会喂给哪些模式，让用户能自己纠正。
+ */
+function openRolePicker(fileId) {
+  const file = arr(state.project?.files).find((f) => f.id === fileId);
+  if (!file) return;
+  const cur = file.role || 'other';
+  const manual = file.roleSource === 'manual';
+  const auto = classifyHint(file.originalName, file.kind);
+
+  const rows = roleCatalog()
+    .map(
+      (r) => `<button class="role-opt ${r.role === cur ? 'current' : ''}" data-pick="${esc(r.role)}">
+        <span class="role-tag ${esc(r.role)}">${esc(r.label)}</span>
+        <span class="role-opt-text">
+          <b>${esc(r.desc)}</b>
+          <i>会喂给：${esc(r.feeds || '—')}</i>
+        </span>
+        ${r.role === cur ? `<span class="role-opt-check">${icon('check', 13)}</span>` : ''}
+      </button>`,
+    )
+    .join('');
+
+  openModal(
+    `<h3>这份材料算什么？</h3>
+     <p class="role-file">${esc(file.originalName)}</p>
+     <p style="color:var(--ink-2);font-size:13px;margin:0 0 14px">
+       当前：<b>${esc(file.roleLabel || '其他')}</b>${manual ? '（你手动指定）' : `（按文件名自动判断${auto ? `，规则目测会给出「${esc(auto)}」` : ''}）`}。
+       改完分类后，左边的模式排列会跟着变。
+     </p>
+     <div class="role-opts">${rows}</div>
+     <div class="modal-actions">
+       <button class="btn" data-close>取消</button>
+       ${manual ? `<button class="btn" id="roleAuto">${icon('refresh', 13)}改回自动识别</button>` : ''}
+     </div>`,
+  );
+
+  $$('#modalRoot [data-pick]').forEach((b) =>
+    b.addEventListener('click', () => applyRole(file.id, b.dataset.pick)),
+  );
+  $('#roleAuto')?.addEventListener('click', () => applyRole(file.id, 'auto'));
+}
+
+/** 前端也按同样的规则猜一下，只用于面板里的说明文字（真正的判定在服务端） */
+function classifyHint(name = '', kind = '') {
+  const n = String(name).toLowerCase();
+  if (kind === 'video' || kind === 'audio') return '上课录像';
+  if (/(^|[^a-z])(solutions?|soln|answers?|ans|marking\s*scheme|rubric)([^a-z]|$)|答案|参考答案|解答/.test(n)) return '标准答案';
+  if (/(^|[^a-z])(lab|labs|laboratory|practical|experiment)([^a-z]|$)|实验|上机/.test(n)) return '实验指导';
+  if (/(^|[^a-z])(tut|tutorial|assignment|homework|hw|exercise|coursework|pset|quiz)([^a-z]|$)|习题|作业|练习/.test(n)) return '习题 / 作业';
+  return '课件';
+}
+
+async function applyRole(fileId, role) {
+  try {
+    const r = await api(`/api/projects/${state.project.id}/files/${fileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+    if (r.project) state.project = r.project;
+    closeModal();
+    syncView();
+    render();
+    const label = role === 'auto' ? '按文件名自动识别' : roleCatalog().find((x) => x.role === role)?.label || role;
+    toast(`已改成「${label}」`);
+    // 分类变了，之前的分析结果就不再对应，提醒一下
+    if (state.project?.analysisStale && state.project?.analysis) {
+      toast('分类变了，建议重新生成一次讲解', 'warn');
+    }
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
 function render() {
   renderGroups();
   renderSidebar();
@@ -1122,12 +1214,14 @@ function renderSidebar() {
           if (f.meta?.withNotes) bits.push(`${f.meta.withNotes} 页备注`);
           if (f.chars) bits.push(`${f.chars.toLocaleString()} 字`);
           const role = f.role || 'other';
+          const manual = f.roleSource === 'manual';
           return `
         <div class="file-card" data-id="${f.id}">
           <span class="ext ${esc(ext)}">${esc(ext.slice(0, 4).toUpperCase())}</span>
           <div>
             <div class="fname">${esc(f.originalName)}</div>
-            <div class="fmeta"><span class="role-tag ${esc(role)}">${esc(f.roleLabel || '附件')}</span> ${esc(bits.join(' · '))}</div>
+            <div class="fmeta"><button class="role-tag ${esc(role)} ${mine ? 'pickable' : ''}" data-role="${esc(f.id)}"
+              title="${mine ? '点一下自己改类别' : ''}">${esc(f.roleLabel || '其他')}${mine ? icon('down', 9) : ''}</button>${manual ? `<span class="manual-dot" title="你手动指定过，不会跟着文件名变">手动</span>` : ''} ${esc(bits.join(' · '))}</div>
             ${f.previewNote ? `<div class="fmeta" style="color:var(--warn)">${esc(f.previewNote)}</div>` : ''}
           </div>
           <div class="ftools">
@@ -2686,6 +2780,13 @@ function wireStaticEvents() {
   wireDock();
 
   $('#fileList').addEventListener('click', (e) => {
+    // 点类别标签 → 打开「这份材料算什么」面板
+    const tag = e.target.closest('[data-role]');
+    if (tag) {
+      e.stopPropagation();
+      openRolePicker(tag.dataset.role);
+      return;
+    }
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
     if (btn.dataset.act === 'del') deleteFile(btn.dataset.id);
