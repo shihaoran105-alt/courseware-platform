@@ -48,6 +48,15 @@ export const STAGE_CATALOG = [
     basedOn: ['courseware', 'lab', 'exercise'],
   },
   {
+    key: 'summary',
+    label: '总结分析',
+    labelEn: 'Study notes',
+    desc: '不按课件结构走，把里面的知识重新梳理一遍：表格 + 思维导图讲透，目标是让没看过课件的人也能学会。',
+    descEn: 'Ignores the courseware structure and re-organises the knowledge itself — tables and mind maps, written to teach someone who never saw the deck.',
+    tab: 'summary',
+    basedOn: ['courseware', 'lab', 'exercise', 'other'],
+  },
+  {
     key: 'quiz',
     label: '练习题',
     labelEn: 'Practice questions',
@@ -95,6 +104,10 @@ export function recommendStages(files = []) {
   if (has('exercise')) {
     picked.add('quiz');
     why.push('有习题 / 作业 → 整理成可以做的练习题');
+  }
+  if (has('courseware') || has('lab') || has('exercise')) {
+    picked.add('summary');
+    why.push('不管什么材料 → 都可以重新梳理一遍知识点（表格 + 思维导图）');
   }
   if (has('solution')) {
     // 答案册本身不产出模式，但它是讲解和出题的依据，单独说明一下

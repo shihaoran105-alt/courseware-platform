@@ -606,6 +606,7 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
         examples: altEn.examples,
         guide: altEn.guide,
         narration: altEn.narration,
+        summary: altEn.summary,
         quiz: altEn.quiz,
         lab: altEn.lab,
         generatedAt: altEn.generatedAt,

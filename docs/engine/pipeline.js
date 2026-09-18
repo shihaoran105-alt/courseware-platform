@@ -17,6 +17,7 @@ import {
   LAB_SYSTEM,
   NARRATION_SYSTEM,
   QUIZ_SYSTEM,
+  SUMMARY_SYSTEM,
   TRANSLATE_SYSTEM,
   alignUser,
   analyzeUser,
@@ -30,6 +31,7 @@ import {
   labUser,
   narrationUser,
   quizUser,
+  summaryUser,
   translateUser,
 } from './prompts.js';
 
@@ -207,6 +209,21 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: () => generateNarration({ files, cfg, emit, signal, onUsage: addUsage }),
     },
     {
+      key: 'summary',
+      label: '总结分析',
+      weight: 18,
+      run: async () => {
+        const { data, usage } = await completeJSON(cfg, {
+          system: SUMMARY_SYSTEM,
+          user: summaryUser(context, summary),
+          maxTokens: 8000,
+          signal,
+        });
+        addUsage(usage);
+        return data;
+      },
+    },
+    {
       key: 'quiz',
       label: '整理练习题',
       weight: 10,
@@ -366,6 +383,15 @@ export async function rerunStage({ stage, files, cfg, signal }) {
       const { data } = await completeJSON(cfg, {
         system: LAB_SYSTEM,
         user: labUser(context, summary),
+        maxTokens: 8000,
+        signal,
+      });
+      return data;
+    }
+    case 'summary': {
+      const { data } = await completeJSON(cfg, {
+        system: SUMMARY_SYSTEM,
+        user: summaryUser(context, summary),
         maxTokens: 8000,
         signal,
       });

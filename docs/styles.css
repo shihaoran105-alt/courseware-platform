@@ -1505,3 +1505,183 @@ ul.clean li::marker { color: var(--ink-4); }
   border-radius: 6px; font-size: 11.5px; font-weight: 600; vertical-align: 3px;
   background: var(--brand-soft); color: var(--brand); border: 1px solid var(--brand-line);
 }
+
+/* ==================== 总结分析 ==================== */
+
+/* ---- 思维导图 ---- */
+.mindmap { padding: 4px 0; }
+.mm-root {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 18px; border-radius: 999px; margin-bottom: 18px;
+  background: linear-gradient(135deg, #2f4b7c, #3d6b6a);
+  color: #fff; font-size: 14px;
+}
+.mm-root-dot { display: inline-flex; opacity: .8; }
+.mm-root-dot svg { width: 15px; height: 15px; }
+.mm-branches {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  padding-left: 14px; border-left: 2px solid var(--line-2);
+}
+.mm-branch {
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); overflow: hidden;
+}
+.mm-branch-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; background: var(--brand-soft);
+  border-bottom: 1px solid var(--brand-line);
+}
+.mm-branch-idx {
+  width: 19px; height: 19px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand); color: #fff; font-size: 10.5px; font-weight: 700;
+}
+.mm-branch-name { font-size: 13px; font-weight: 650; color: var(--brand); }
+.mm-branch-note { padding: 8px 12px 0; font-size: 11.5px; color: var(--ink-4); line-height: 1.65; }
+.mm-leaves { padding: 7px 10px 11px; display: flex; flex-direction: column; gap: 5px; }
+.mm-leaf {
+  position: relative; padding: 5px 9px 5px 15px; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.mm-leaf::before {
+  content: ''; position: absolute; left: 5px; top: 11px;
+  width: 4px; height: 4px; border-radius: 50%; background: var(--brand);
+  opacity: .5;
+}
+.mm-leaf-name { font-size: 12.5px; color: var(--ink); font-weight: 550; }
+.mm-leaf-note { display: block; font-size: 11.5px; color: var(--ink-4); margin-top: 2px; line-height: 1.6; }
+
+/* ---- 对照表 ---- */
+.sum-table-block { margin-bottom: 22px; }
+.sum-table-block:last-child { margin-bottom: 0; }
+.sum-table-block h5 {
+  margin: 0 0 9px; font-size: 13px; font-weight: 650; color: var(--ink);
+}
+.sum-table-wrap { overflow-x: auto; border-radius: 9px; border: 1px solid var(--line); }
+.sum-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); }
+.sum-table th {
+  background: var(--surface-3); color: var(--ink); font-weight: 650;
+  text-align: left; padding: 9px 12px; white-space: nowrap;
+  border-bottom: 1px solid var(--line-2);
+}
+.sum-table td {
+  padding: 9px 12px; border-bottom: 1px solid var(--line);
+  color: var(--ink-2); line-height: 1.7; vertical-align: top;
+}
+.sum-table tbody tr:last-child td { border-bottom: 0; }
+.sum-table tbody tr:hover td { background: var(--surface-2); }
+.sum-table-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 9px 0 0; font-size: 12.5px; color: var(--brand); line-height: 1.7;
+}
+
+/* ---- 知识点 ---- */
+.sum-concepts { display: flex; flex-direction: column; gap: 14px; }
+.sum-concept {
+  padding: 15px 17px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.sc-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.sc-head b { font-size: 15px; font-weight: 680; color: var(--ink); }
+.sc-idx {
+  width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand); color: #fff; font-size: 11.5px; font-weight: 700;
+}
+.sc-plain {
+  margin: 0 0 10px; padding: 9px 12px; border-radius: 8px;
+  background: var(--surface); border-left: 3px solid var(--brand);
+  font-size: 13.5px; line-height: 1.9; color: var(--ink);
+}
+.sc-row { display: flex; gap: 9px; margin-bottom: 7px; font-size: 13px; line-height: 1.8; color: var(--ink-2); }
+.sc-tag {
+  flex-shrink: 0; font-size: 11px; padding: 2px 8px; height: 21px; line-height: 17px;
+  border-radius: 5px; background: var(--surface-3); color: var(--ink-3);
+}
+.sc-detail { margin: 10px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink); }
+.sc-detail p { margin: 0 0 9px; }
+.sc-detail p:last-child { margin-bottom: 0; }
+.sc-detail ul, .sc-detail ol { margin: 0 0 9px; padding-left: 20px; }
+.sc-detail li { margin-bottom: 4px; }
+.sc-detail code {
+  background: var(--surface-3); padding: 1px 5px; border-radius: 4px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px;
+}
+.sc-detail pre {
+  background: #1a2233; color: #e6edf7; padding: 10px 13px; border-radius: 7px;
+  overflow-x: auto; font-size: 12.5px; margin: 0 0 9px;
+}
+.sc-detail pre code { background: none; color: inherit; padding: 0; }
+.sc-detail table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 0 0 9px; }
+.sc-detail th, .sc-detail td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
+.sc-bg {
+  margin-top: 10px; padding: 8px 11px; border-radius: 7px;
+  background: #fffaf0; border: 1px solid #f0e0bd; color: #7a5508;
+  font-size: 12.5px; line-height: 1.75;
+}
+
+/* ---- 易混 ---- */
+.sum-confusions { display: grid; gap: 11px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.sum-confusion {
+  padding: 13px 15px; border-radius: 9px;
+  background: #fdf1f1; border: 1px solid #f3d5d5;
+}
+.sf-pair { font-size: 13.5px; font-weight: 680; color: #a33; margin-bottom: 8px; }
+.sf-line { font-size: 12.5px; line-height: 1.8; color: var(--ink-2); margin-bottom: 5px; display: flex; gap: 7px; }
+.sf-line b {
+  flex-shrink: 0; font-size: 11px; font-weight: 600; color: #a33;
+  background: #fff; border-radius: 4px; padding: 1px 7px; height: 20px; line-height: 18px;
+}
+
+/* ---- 学习路径 ---- */
+.sum-path { display: flex; flex-direction: column; gap: 0; }
+.sp-step { display: flex; gap: 13px; padding-bottom: 16px; position: relative; }
+.sp-step:not(:last-child)::before {
+  content: ''; position: absolute; left: 13px; top: 30px; bottom: 0;
+  width: 2px; background: var(--line);
+}
+.sp-no {
+  width: 27px; height: 27px; border-radius: 50%; flex-shrink: 0; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand-soft); border: 2px solid var(--brand);
+  color: var(--brand); font-size: 12px; font-weight: 700;
+}
+.sp-body b { font-size: 13.5px; font-weight: 650; color: var(--ink); }
+.sp-why { font-size: 12.5px; color: var(--ink-3); line-height: 1.75; margin-top: 3px; }
+.sp-check {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+  font-size: 12px; color: var(--teal); background: var(--teal-soft);
+  border: 1px solid var(--teal-line); border-radius: 6px; padding: 3px 9px;
+}
+
+/* ---- 自测 ---- */
+.sum-checks { display: flex; flex-direction: column; gap: 8px; }
+.sum-check {
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2);
+  overflow: hidden;
+}
+.sum-check summary {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  padding: 11px 14px; font-size: 13.5px; line-height: 1.75; color: var(--ink);
+  list-style: none;
+}
+.sum-check summary::-webkit-details-marker { display: none; }
+.sum-check summary::after {
+  content: '▾'; margin-left: auto; color: var(--ink-4); flex-shrink: 0;
+  transition: transform .15s ease;
+}
+.sum-check[open] summary::after { transform: rotate(180deg); }
+.sum-check[open] summary { border-bottom: 1px solid var(--line); }
+.sq-idx {
+  width: 21px; height: 21px; border-radius: 6px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--ink-3); font-size: 11px; font-weight: 700;
+}
+.sq-body { padding: 11px 14px 13px 45px; }
+.sq-a { font-size: 13px; line-height: 1.85; color: var(--ink); display: flex; gap: 8px; }
+.sq-a b {
+  flex-shrink: 0; font-size: 11px; color: var(--ok);
+  background: var(--ok-soft); border-radius: 4px; padding: 1px 7px; height: 20px; line-height: 18px;
+}
+.sq-tests { margin-top: 7px; font-size: 11.5px; color: var(--ink-4); }

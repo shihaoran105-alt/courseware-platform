@@ -760,6 +760,7 @@ const TABS = [
   { id: 'examples', label: '事例讲解', icon: 'bulb' },
   { id: 'guide', label: '教学应用', icon: 'compass' },
   { id: 'narration', label: '逐页讲解', icon: 'mic' },
+  { id: 'summary', label: '总结分析', icon: 'layers' },
   { id: 'quiz', label: '做题', icon: 'pen' },
   { id: 'lab', label: '做 Lab', icon: 'flask' },
   { id: 'chat', label: '课件问答', icon: 'chat' },
@@ -1485,6 +1486,7 @@ function renderStageCurrent() {
   if (state.tab === 'guide') return renderGuide(state.project.analysis?.guide, state.project.analysis?.analysis);
   if (state.tab === 'combine') return renderCombine();
   if (state.tab === 'narration') return renderNarration(state.project.analysis?.narration);
+  if (state.tab === 'summary') return renderSummary(state.project.analysis?.summary);
   if (state.tab === 'quiz') return renderQuiz(state.project.analysis?.quiz);
   if (state.tab === 'lab') return renderLab(state.project.analysis?.lab);
   return '';
@@ -1560,6 +1562,7 @@ function renderBody() {
     examples: 'examples',
     guide: 'guide',
     narration: 'narration',
+    summary: 'summary',
     combine: 'quiz',
     quiz: 'quiz',
     lab: 'lab',
@@ -2200,6 +2203,180 @@ function renderExamples(ex) {
       })
       .join('')
   );
+}
+
+/* --------------------------- 总结分析 --------------------------- */
+
+/** 表格行：模型可能给数组，也可能给「用 | 分隔的一整行字符串」，两种都吃 */
+function summaryCells(row, n) {
+  const cells = Array.isArray(row) ? row : String(row ?? '').split('|').map((c) => c.trim());
+  return Array.from({ length: n }, (_, i) => cells[i] ?? '');
+}
+
+/** 一张表 */
+function summaryTable(t, i) {
+  const cols = arr(t?.columns);
+  if (!cols.length) return '';
+  const rows = arr(t?.rows);
+  return `<div class="sum-table-block">
+    ${t.title ? `<h5>${esc(t.title)}</h5>` : ''}
+    <div class="sum-table-wrap">
+      <table class="sum-table">
+        <thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${rows
+          .map((r) => `<tr>${summaryCells(r, cols.length).map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`)
+          .join('')}</tbody>
+      </table>
+    </div>
+    ${t.note ? `<p class="sum-table-note">${icon('bulb', 12)}${esc(t.note)}</p>` : ''}
+  </div>`;
+}
+
+/** 思维导图：用 CSS 画成「主干 + 分支」的树，静态版和打印都正常 */
+function summaryMindmap(mm) {
+  const branches = arr(mm?.branches);
+  if (!branches.length) return '';
+  const svg = (d) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  return `<div class="mindmap">
+    <div class="mm-root">
+      <span class="mm-root-dot">${svg('<circle cx="12" cy="12" r="3"/>')}</span>
+      <b>${esc(mm.root || '总主题')}</b>
+    </div>
+    <div class="mm-branches">
+      ${branches
+        .map(
+          (b, i) => `<div class="mm-branch" style="--i:${i}">
+            <div class="mm-branch-head">
+              <span class="mm-branch-idx">${i + 1}</span>
+              <span class="mm-branch-name">${esc(b.name || '')}</span>
+            </div>
+            ${b.note ? `<div class="mm-branch-note">${esc(b.note)}</div>` : ''}
+            ${
+              arr(b.children).length
+                ? `<div class="mm-leaves">${b.children
+                    .map(
+                      (c) => `<div class="mm-leaf">
+                        <span class="mm-leaf-name">${esc(c.name || c)}</span>
+                        ${c && c.note ? `<span class="mm-leaf-note">${esc(c.note)}</span>` : ''}
+                      </div>`,
+                    )
+                    .join('')}</div>`
+                : ''
+            }
+          </div>`,
+        )
+        .join('')}
+    </div>
+  </div>`;
+}
+
+function renderSummary(sm) {
+  if (!sm) {
+    return `<div class="card"><h3>${icon('layers', 15)}总结分析</h3><p style="color:var(--ink-2)">总结分析还没有生成。点右上角 <b>「重新生成本节」</b> 试试。</p></div>`;
+  }
+  if (sm.skipped) return '';
+
+  const concepts = arr(sm.concepts);
+  const tables = arr(sm.tables);
+  const confusions = arr(sm.confusions);
+  const path = arr(sm.learningPath);
+  const checks = arr(sm.selfCheck);
+
+  const hero = `<div class="hero" style="background:linear-gradient(135deg,#1d2b3a,#2f4b4a)">
+    <h1>${esc(sm.title || '知识总结')}</h1>
+    <div class="facts">
+      <span class="fact">${concepts.length} 个知识点</span>
+      <span class="fact">${tables.length} 张表</span>
+      <span class="fact">${arr(sm.mindmap?.branches).length} 支思维导图</span>
+      <span class="fact">${checks.length} 道自测题</span>
+    </div>
+    ${sm.bigPicture ? `<p style="margin:16px 0 0;font-size:14.5px;line-height:1.95;color:rgba(255,255,255,.9)">${esc(sm.bigPicture)}</p>` : ''}
+  </div>`;
+
+  const mapCard = arr(sm.mindmap?.branches).length
+    ? `<div class="card"><h3><span class="num">1</span>思维导图 · 知识的骨架
+        <span class="spacer"></span>
+        <span style="font-weight:400;color:var(--ink-4);font-size:12px">先看这张图建立全局印象</span>
+      </h3>${summaryMindmap(sm.mindmap)}</div>`
+    : '';
+
+  const conceptCard = concepts.length
+    ? `<div class="card"><h3><span class="num">2</span>知识点逐个讲透</h3>
+        <div class="sum-concepts">${concepts
+          .map((c, i) => {
+            const d = dnd({
+              title: `知识点：${String(c.term || '').slice(0, 50)}`,
+              source: '总结分析 · 知识点',
+              text: [c.term, c.plain, c.why, c.detail, c.relations, c.background].filter(Boolean).join('\n\n'),
+            });
+            return `<div class="sum-concept" ${d.attrs}>
+              <div class="sc-head"><span class="sc-idx">${i + 1}</span><b>${esc(c.term || '')}</b>${d.btn}</div>
+              ${c.plain ? `<p class="sc-plain">${esc(c.plain)}</p>` : ''}
+              ${c.why ? `<div class="sc-row"><span class="sc-tag">为什么需要</span><span>${esc(c.why)}</span></div>` : ''}
+              ${c.detail ? `<div class="sc-detail">${mdToHtml(c.detail)}</div>` : ''}
+              ${c.relations ? `<div class="sc-row"><span class="sc-tag">关系</span><span>${esc(c.relations)}</span></div>` : ''}
+              ${c.background && !/^课件已讲清楚/.test(c.background) ? `<div class="sc-bg">${icon('alert', 12)} 背景补充：${esc(c.background)}</div>` : ''}
+            </div>`;
+          })
+          .join('')}</div></div>`
+    : '';
+
+  const tableCard = tables.length
+    ? `<div class="card"><h3><span class="num">3</span>对照表
+        <span class="spacer"></span>
+        <span style="font-weight:400;color:var(--ink-4);font-size:12px">凡是能摆在一起比的，都用表来看</span>
+      </h3>${tables.map(summaryTable).join('')}</div>`
+    : '';
+
+  const confCard = confusions.length
+    ? `<div class="card"><h3><span class="num">4</span>最容易混的地方</h3>
+        <div class="sum-confusions">${confusions
+          .map(
+            (c) => `<div class="sum-confusion">
+              <div class="sf-pair">${esc(c.pair || '')}</div>
+              ${c.difference ? `<div class="sf-line"><b>区别</b>${esc(c.difference)}</div>` : ''}
+              ${c.howToTell ? `<div class="sf-line"><b>怎么判断</b>${esc(c.howToTell)}</div>` : ''}
+            </div>`,
+          )
+          .join('')}</div></div>`
+    : '';
+
+  const pathCard = path.length
+    ? `<div class="card"><h3><span class="num">5</span>从零开始的顺序</h3>
+        <div class="sum-path">${path
+          .map(
+            (s, i) => `<div class="sp-step">
+              <span class="sp-no">${esc(s.step ?? i + 1)}</span>
+              <div class="sp-body">
+                <b>${esc(s.title || '')}</b>
+                ${s.why ? `<div class="sp-why">${esc(s.why)}</div>` : ''}
+                ${s.checkpoint ? `<div class="sp-check">${icon('target', 12)}过关标准：${esc(s.checkpoint)}</div>` : ''}
+              </div>
+            </div>`,
+          )
+          .join('')}</div></div>`
+    : '';
+
+  const checkCard = checks.length
+    ? `<div class="card"><h3><span class="num">6</span>自测
+        <span class="spacer"></span>
+        <span style="font-weight:400;color:var(--ink-4);font-size:12px">答不上来就回去看对应的知识点</span>
+      </h3>
+      <div class="sum-checks">${checks
+        .map(
+          (c, i) => `<details class="sum-check">
+            <summary><span class="sq-idx">${i + 1}</span>${esc(c.q || '')}</summary>
+            <div class="sq-body">
+              <div class="sq-a"><b>答案</b>${esc(c.a || '')}</div>
+              ${c.tests ? `<div class="sq-tests">${icon('target', 11)} 检验：${esc(c.tests)}</div>` : ''}
+            </div>
+          </details>`,
+        )
+        .join('')}</div></div>`
+    : '';
+
+  return hero + mapCard + conceptCard + tableCard + confCard + pathCard + checkCard;
 }
 
 /* --------------------------- 3. 教学应用 --------------------------- */
