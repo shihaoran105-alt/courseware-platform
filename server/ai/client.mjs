@@ -160,7 +160,29 @@ export async function complete(cfg, { system, user, maxTokens = 4096, temperatur
  * 模型偶尔会吐出语法不合法的 JSON（少个冒号、多个逗号），括号配平修复救不了这种，
  * 所以解析失败会自动重试一次——重试一次基本都能拿到合法 JSON，比整节失败划算。
  */
+/**
+ * 让模型按用户选的界面语言产出内容。
+ *
+ * 挂在这里而不是逐个改提示词：completeJSON / stream 是唯一的出口，
+ * 改一处所有阶段（分析 / 事例 / 讲稿 / 出题 / Lab / 精讲 / 问答）一起生效。
+ */
+export function withLang(system = '', lang = 'zh') {
+  if (lang !== 'en') return system;
+  return `${system}
+
+【Output language: English】
+Write every natural-language field in **English**. This includes titles, descriptions,
+explanations, steps, hints, summaries, feedback and chat replies.
+Do NOT translate:
+- quoted courseware text (the coursewareSays field, excerpts) — keep the original wording,
+  it is the evidence the answer is based on;
+- proper nouns, register names, code identifiers, file names and page labels
+  (the page label 第 3 页 may stay as-is inside a citation).
+It is fine for an English sentence to contain a quoted Chinese fragment.`;
+}
+
 export async function completeJSON(cfg, { system, user, maxTokens = 8000, temperature = 0.25, signal, retries = 1 }) {
+  system = withLang(system, cfg?.lang || 'zh');
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const { content, usage } = await complete(cfg, {
@@ -186,6 +208,7 @@ export async function completeJSON(cfg, { system, user, maxTokens = 8000, temper
 
 /** 流式输出，逐段回调 */
 export async function stream(cfg, { system, messages = [], user, maxTokens = 4096, temperature = 0.3, signal, onDelta }) {
+  system = withLang(system, cfg?.lang || 'zh');
   const payload = [];
   if (system) payload.push({ role: 'system', content: system });
   payload.push(...messages);

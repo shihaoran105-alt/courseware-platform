@@ -1440,3 +1440,12 @@ ul.clean li::marker { color: var(--ink-4); }
 .skipped-card p { margin: 0; font-size: 13px; color: var(--ink-3); }
 .skipped-note { color: var(--ink-4) !important; font-size: 12px !important; }
 .skipped-card .btn { margin-top: 14px; }
+
+
+/* 语言切换按钮 */
+.lang-chip {
+  cursor: pointer; font-weight: 700; min-width: 34px; justify-content: center;
+  font-size: 11.5px; letter-spacing: .02em;
+}
+.lang-chip:hover { border-color: var(--brand-line); color: var(--brand); }
+.lang-chip.on { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand); }

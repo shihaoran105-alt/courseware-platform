@@ -20,6 +20,7 @@
       </div>
     </div>
     <div class="spacer"></div>
+    <button class="chip lang-chip" id="langChip" title="切换语言"></button>
     <span class="chip" id="modelChip">模型加载中</span>
     <button class="chip version-chip" id="versionChip" title="查看更新内容"></button>
     <span class="chip" id="keyChip">检查配置中</span>
@@ -92,6 +93,8 @@
   pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
   window.pdfjsLib = pdfjsLib;
 </script>
+<script src="i18n-dict.js"></script>
+<script src="i18n.js"></script>
 <script src="./vendor/jszip.min.js"></script>
 <script src="./static-boot.js"></script>
 <script src="./icons.js"></script>

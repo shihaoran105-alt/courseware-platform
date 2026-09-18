@@ -215,8 +215,13 @@ const listHtml = (v, fallback = '_课件未提供_') => {
 /* ------------------------------- API ------------------------------- */
 
 /** 带上访客自己的 API 配置（服务器只用一次，不保存） */
+/** 当前界面语言；模型生成的内容要跟着它走 */
+function currentLang() {
+  return window.CWI18n?.lang || 'zh';
+}
+
 function apiHeaders() {
-  const h = { 'Content-Type': 'application/json' };
+  const h = { 'Content-Type': 'application/json', 'X-Lang': currentLang() };
   if (state.apiKey) h['X-API-Key'] = state.apiKey;
   if (state.apiBase) h['X-API-Base'] = state.apiBase;
   if (state.apiModel) h['X-API-Model'] = state.apiModel;
@@ -708,6 +713,16 @@ function doUpdate() {
   const { pathname, hash } = window.location;
   window.location.replace(`${pathname}?v=${encodeURIComponent(v)}${hash}`);
 }
+
+/** 语言切换后的提示：生成好的内容是存下来的数据，不会自动翻译 */
+document.addEventListener('cw:lang', (e) => {
+  const en = e.detail?.lang === 'en';
+  if (state.project?.analysis) {
+    toast(en ? 'Interface switched to English. Generated content keeps its original language — regenerate to get an English version.' : '界面已切回中文。已生成的内容不会自动翻译，重新生成即可得到中文版。', 'ok');
+  } else {
+    toast(en ? 'Interface switched to English' : '界面已切回中文', 'ok');
+  }
+});
 
 function wireVersion() {
   const el = $('#versionChip');

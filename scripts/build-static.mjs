@@ -40,7 +40,7 @@ ensure(path.join(OUT, 'engine'));
 ensure(path.join(OUT, 'vendor'));
 
 // ---------- 1. 前端（原样复制，两种模式共用） ----------
-for (const f of ['app.js', 'quiz-lab.js', 'icons.js', 'slides.js', 'styles.css']) {
+for (const f of ['app.js', 'quiz-lab.js', 'icons.js', 'slides.js', 'styles.css', 'i18n.js', 'i18n-dict.js']) {
   copy(path.join(ROOT, 'public', f), path.join(OUT, f));
   log('前端  ' + f);
 }

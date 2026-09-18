@@ -132,10 +132,14 @@ export function resolveRequestConfig(req) {
     }
   };
 
+  // 界面语言：模型产出的内容要跟着用户选的语言走（前端用 X-Lang 头带上）
+  const lang = header('x-lang') === 'en' ? 'en' : 'zh';
+
   const clientKey = header('x-api-key');
   if (clientKey) {
     return {
       ...base,
+      lang,
       apiKey: clientKey,
       keySource: 'client',
       baseUrl: (header('x-api-base') || base.baseUrl).replace(/\/+$/, ''),
@@ -145,7 +149,7 @@ export function resolveRequestConfig(req) {
 
   if (!isPublicMode()) {
     const { apiKey, source } = serverKey();
-    if (apiKey) return { ...base, apiKey, keySource: source };
+    if (apiKey) return { ...base, lang, apiKey, keySource: source };
   }
 
   throw new NeedKeyError(

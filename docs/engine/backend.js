@@ -28,7 +28,7 @@ import { allProjects, currentId, delProject, getProject, putProject, setCurrentI
 import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, roleLabel } from './roles.js';
 import { recommendStages, STAGE_CATALOG, normalizeStages } from './stages.js';
 
-const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model' };
+const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', lang: 'cw_lang' };
 const lsGet = (k) => {
   try {
     return localStorage.getItem(k) || '';
@@ -83,6 +83,8 @@ function aiConfig() {
     model: lsGet(LS.model) || DEFAULT_MODEL,
     maxInputChars: 90000,
     keySource: 'browser',
+    // 静态版没有服务端，直接从 localStorage 读界面语言
+    lang: lsGet(LS.lang) === 'en' ? 'en' : 'zh',
   };
 }
 
