@@ -79,15 +79,21 @@ const data = read();
 const prev = data.version;
 const next = bump(prev, action);
 
+// 第一条是这次更新的标题（要短），其余是分条说明。
+// 只给一条时，标题和说明共用它，免得出现空白的条目列表。
+const title = notes[0];
+const changes = notes.length > 1 ? notes.slice(1) : notes;
+
 data.history = data.history || [];
 data.history.unshift({
   version: next,
   date: new Date().toISOString().slice(0, 10),
-  title: notes[0],
-  changes: notes,
+  title,
+  changes,
 });
 data.version = next;
 write(data);
 
 console.log(`✓ ${prev} → ${next}（${action === 'minor' ? '版本更新' : action === 'patch' ? '小补丁迭代' : '大版本'}）`);
-for (const n of notes) console.log(`    · ${n}`);
+console.log(`    标题：${title}`);
+for (const n of changes) console.log(`    · ${n}`);
