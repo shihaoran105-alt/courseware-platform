@@ -723,6 +723,11 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
     const bilingual = Boolean(project.analysis.analysisEn);
     const data = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'zh' }, pageImages });
     project.analysis[stage] = data;
+    // 记下这一节是不是用读图生成的，否则页面上的标记会一直停留在旧状态
+    if (pageImages.length) {
+      project.analysis.pagesRead = pageImages.length;
+      project.analysis.visionModel = cfg.visionModel || 'deepseek-flash';
+    }
     if (bilingual) {
       const en = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'en' }, pageImages });
       project.analysis.analysisEn = project.analysis.analysisEn || {};
