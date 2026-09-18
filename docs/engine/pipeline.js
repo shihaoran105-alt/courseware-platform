@@ -85,10 +85,27 @@ function chunkToContext(chunk) {
  * 分段生成逐页讲解稿（长课件一次性输出会被截断，所以按 10 页 / 12000 字切段后合并）
  * 单段失败只跳过该段，不影响整体。
  */
-export async function generateNarration({ files, cfg, emit = () => {}, signal, onUsage = () => {} }) {
+export async function generateNarration({
+  files,
+  cfg,
+  emit = () => {},
+  signal,
+  onUsage = () => {},
+  pageImages = [],
+}) {
   const chunks = chunkBlocks(files.list);
   if (!chunks.length) return { segments: [] };
   const segments = [];
+  // 按块的位置标记去页面截图里找对应的那张，逐段一起发过去
+  const byLabel = new Map();
+  for (const p of pageImages || []) {
+    if (p?.label) byLabel.set(String(p.label).replace(/\s+/g, ''), p);
+  }
+  const pagesOfChunk = (chunk) =>
+    (chunk.blocks || [])
+      .map((b) => byLabel.get(String(b.label || '').replace(/\s+/g, '')))
+      .filter(Boolean);
+
   for (let i = 0; i < chunks.length; i++) {
     emit({
       type: 'stage-detail',
@@ -96,9 +113,17 @@ export async function generateNarration({ files, cfg, emit = () => {}, signal, o
       message: `正在撰写讲解稿 ${i + 1}/${chunks.length}（${chunks[i].file}）`,
     });
     try {
+      const pages = pagesOfChunk(chunks[i]);
       const { data, usage } = await completeJSON(cfg, {
         system: NARRATION_SYSTEM,
-        user: narrationUser(chunkToContext(chunks[i]), files.list),
+        images: pages.map((p) => p.dataUrl).filter(Boolean),
+        user:
+          narrationUser(chunkToContext(chunks[i]), files.list) +
+          (pages.length
+            ? `\n\n【这一段对应的页面截图】\n${pages
+                .map((p) => p.label)
+                .join('、')}\n这一段的每一页都附了截图，图表、框图、版面关系以截图为准。`
+            : ''),
         maxTokens: 8000,
         signal,
       });
@@ -124,12 +149,34 @@ export async function generateNarration({ files, cfg, emit = () => {}, signal, o
  * @param {object} opts.cfg 运行时配置
  * @param {(evt:object)=>void} opts.emit 进度回调
  */
-export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, skipNarration = false, only = null }) {
+export async function runFullAnalysis({
+  files,
+  cfg,
+  emit = () => {},
+  signal,
+  skipNarration = false,
+  only = null,
+  pageImages = [],
+}) {
   const started = Date.now();
   const context = files.context;
   const summary = fileSummary(files.list);
   // 有答案册就把答案原文一并交给模型，answer 字段以它为准
   const key = answerKeyExcerpt(files, {});
+
+  /**
+   * 页面截图。文字层读不出来的东西 —— 电路图、框图、照片，以及被挤成一坨的表格 ——
+   * 全靠它。一页约 370-1000 tokens，比重新生成一遍便宜得多。
+   */
+  const allPages = () => pageImages || [];
+  const imgsFor = (list) => (list || []).map((p) => p.dataUrl).filter(Boolean);
+  /** 告诉模型后面附了哪些页面截图，否则它不知道那些图是什么、哪张对应第几页 */
+  const withPages = (prompt, list) =>
+    list && list.length
+      ? `${prompt}\n\n【课件页面截图】\n按顺序附上了这些页面：${list.map((p) => p.label || `第 ${p.page} 页`).join('、')}\n` +
+        `文字层读不出来的内容（图表、框图、公式、表格结构、版面关系）请直接看这些截图，以截图为准。`
+      : prompt;
+
   const result = {
     analysis: null,
     examples: null,
@@ -140,6 +187,9 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     errors: [],
     usage: { promptTokens: 0, completionTokens: 0 },
     model: cfg.model,
+    // 带页面截图时实际用的是视觉模型，这里如实记下来，方便核对成本和效果
+    visionModel: pageImages.length ? cfg.visionModel || 'deepseek-flash' : '',
+    pagesRead: pageImages.length,
     // 这一轮是用什么语言生成的（前端靠它判断要不要叠英文）
     lang: cfg.lang || 'zh',
     generatedAt: new Date().toISOString(),
@@ -164,7 +214,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: ANALYZE_SYSTEM,
-          user: analyzeUser(context, summary),
+          images: imgsFor(allPages()),
+          user: withPages(analyzeUser(context, summary), allPages()),
           maxTokens: 8000,
           signal,
         });
@@ -179,7 +230,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: EXAMPLES_SYSTEM,
-          user: examplesUser(context, summary),
+          images: imgsFor(allPages()),
+          user: withPages(examplesUser(context, summary), allPages()),
           maxTokens: 8000,
           signal,
         });
@@ -194,7 +246,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: GUIDE_SYSTEM,
-          user: guideUser(context, summary),
+          images: imgsFor(allPages()),
+          user: withPages(guideUser(context, summary), allPages()),
           maxTokens: 8000,
           signal,
         });
@@ -215,7 +268,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: SUMMARY_SYSTEM,
-          user: summaryUser(context, summary),
+          images: imgsFor(allPages()),
+          user: withPages(summaryUser(context, summary), allPages()),
           maxTokens: 8000,
           signal,
         });
@@ -230,7 +284,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: QUIZ_SYSTEM,
-          user: quizUser(context, summary, key.text),
+          images: imgsFor(allPages()),
+          user: withPages(quizUser(context, summary, key.text), allPages()),
           maxTokens: 8000,
           signal,
         });
@@ -245,7 +300,8 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: LAB_SYSTEM,
-          user: labUser(context, summary),
+          images: imgsFor(allPages()),
+          user: withPages(labUser(context, summary), allPages()),
           maxTokens: 8000,
           signal,
         });

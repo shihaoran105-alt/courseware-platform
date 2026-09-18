@@ -34,6 +34,9 @@ for (const dir of [DATA_DIR, UPLOAD_DIR, CACHE_DIR]) {
 export const DEFAULTS = {
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
+  // 读页面截图必须用支持图片的模型。这台环境上 deepseek-v4-pro 明确不认图片
+  // （会返回「[Unsupported Image]」），deepseek-flash 实测能准确读出图表和表格。
+  visionModel: 'deepseek-flash',
   maxInputChars: 90000,
   port: 4173,
   host: '127.0.0.1',
@@ -112,6 +115,7 @@ export function loadServerConfig() {
   return {
     baseUrl: (process.env.DEEPSEEK_BASE_URL || saved.baseUrl || DEFAULTS.baseUrl).replace(/\/+$/, ''),
     model: process.env.DEEPSEEK_MODEL || saved.model || DEFAULTS.model,
+    visionModel: process.env.VISION_MODEL || saved.visionModel || DEFAULTS.visionModel,
     maxInputChars: Number(process.env.MAX_INPUT_CHARS) || Number(saved.maxInputChars) || DEFAULTS.maxInputChars,
     port: Number(process.env.PORT) || DEFAULTS.port,
     host: process.env.HOST || DEFAULTS.host,
@@ -182,6 +186,7 @@ export function publicConfig() {
     publicMode: isPublicMode(),
     hasServerKey: Boolean(apiKey),
     model: base.model,
+    visionModel: base.visionModel,
     baseUrl: base.baseUrl,
     maxInputChars: base.maxInputChars,
     providers: PROVIDERS,

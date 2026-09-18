@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>raster</title></head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+/* 由 server/render-pages.mjs 驱动：把 PDF 逐页画成 JPEG 交给 Node 侧取回。
+   这个文件只跑在 headless Chrome 里，不是给用户看的页面。 */
+import * as pdfjs from './pdf.min.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs';
+
+window.__PDF_PAGES = 0;
+window.__PDF_ERR = '';
+
+let doc = null;
+try {
+  doc = await pdfjs.getDocument({ url: './doc.pdf' }).promise;
+  window.__PDF_PAGES = doc.numPages;
+} catch (e) {
+  window.__PDF_ERR = 'pdf.js 打开失败：' + (e && e.message ? e.message : String(e));
+}
+
+/** 渲染 [from, to] 页，返回 [{page, dataUrl}] */
+window.__rasterRange = async (from, to, maxWidth, quality) => {
+  const out = [];
+  for (let p = from; p <= to; p++) {
+    if (p > doc.numPages) break;
+    const page = await doc.getPage(p);
+    const base = page.getViewport({ scale: 1 });
+    // 按目标宽度算缩放，避免又大又糊
+    const scale = Math.min(3, Math.max(0.4, maxWidth / base.width));
+    const vp = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(vp.width);
+    canvas.height = Math.round(vp.height);
+    const ctx = canvas.getContext('2d', { alpha: false });
+    // 白底：PDF 页面本身透明的话，JPEG 会变成黑块
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    out.push({ page: p, dataUrl: canvas.toDataURL('image/jpeg', quality) });
+    canvas.width = 0;
+    canvas.height = 0;
+    page.cleanup();
+  }
+  return JSON.stringify(out);
+};
+</script>
+</body>
+</html>

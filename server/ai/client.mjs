@@ -92,7 +92,7 @@ function assertKey(cfg) {
   }
 }
 
-async function request(cfg, body, { signal, retries = 3 } = {}) {
+async function request(cfg, body, { signal, retries = 3, model } = {}) {
   assertKey(cfg);
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -103,7 +103,7 @@ async function request(cfg, body, { signal, retries = 3 } = {}) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${cfg.apiKey}`,
         },
-        body: JSON.stringify({ model: cfg.model, ...body }),
+        body: JSON.stringify({ model: model || cfg.model, ...body }),
         signal,
       });
       if (res.ok) return res;
@@ -126,16 +126,36 @@ async function request(cfg, body, { signal, retries = 3 } = {}) {
 }
 
 /** 一次性拿到完整回复 */
-export async function complete(cfg, { system, user, maxTokens = 4096, temperature = 0.3, json = false, signal }) {
+/** 把「一段文字 + 若干张图」拼成 OpenAI 兼容的多模态 content */
+export function buildContent(user, images) {
+  const imgs = (images || []).filter(Boolean);
+  if (!imgs.length) return user;
+  return [
+    { type: 'text', text: user },
+    ...imgs.map((im) => ({
+      type: 'image_url',
+      image_url: { url: typeof im === 'string' ? im : im.dataUrl || im.url || '' },
+    })),
+  ];
+}
+
+export async function complete(
+  cfg,
+  { system, user, images = null, maxTokens = 4096, temperature = 0.3, json = false, signal },
+) {
+  const hasImages = Array.isArray(images) && images.length > 0;
+  // 带图时必须换成视觉模型 —— 配置的那个（比如 deepseek-v4-pro）根本不认图片
+  const model = hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model;
+
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
-  messages.push({ role: 'user', content: user });
+  messages.push({ role: 'user', content: buildContent(user, images) });
 
   const body = { messages, max_tokens: maxTokens, temperature, stream: false };
   if (json) body.response_format = { type: 'json_object' };
 
   const read = async (b) => {
-    const res = await request(cfg, b, { signal });
+    const res = await request(cfg, b, { signal, model });
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content ?? '';
     return { content, usage: data?.usage || null };
@@ -181,13 +201,17 @@ Do NOT translate:
 It is fine for an English sentence to contain a quoted Chinese fragment.`;
 }
 
-export async function completeJSON(cfg, { system, user, maxTokens = 8000, temperature = 0.25, signal, retries = 1 }) {
+export async function completeJSON(
+  cfg,
+  { system, user, images = null, maxTokens = 8000, temperature = 0.25, signal, retries = 1 },
+) {
   system = withLang(system, cfg?.lang || 'zh');
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const { content, usage } = await complete(cfg, {
       system,
       user,
+      images,
       maxTokens,
       temperature,
       json: true,
@@ -207,19 +231,22 @@ export async function completeJSON(cfg, { system, user, maxTokens = 8000, temper
 }
 
 /** 流式输出，逐段回调 */
-export async function stream(cfg, { system, messages = [], user, maxTokens = 4096, temperature = 0.3, signal, onDelta }) {
+export async function stream(
+  cfg,
+  { system, messages = [], user, images = null, maxTokens = 4096, temperature = 0.3, signal, onDelta },
+) {
   system = withLang(system, cfg?.lang || 'zh');
+  const hasImages = Array.isArray(images) && images.length > 0;
   const payload = [];
   if (system) payload.push({ role: 'system', content: system });
   payload.push(...messages);
-  if (user) payload.push({ role: 'user', content: user });
+  if (user) payload.push({ role: 'user', content: buildContent(user, images) });
 
-  const res = await request(cfg, {
-    messages: payload,
-    max_tokens: maxTokens,
-    temperature,
-    stream: true,
-  }, { signal });
+  const res = await request(
+    cfg,
+    { messages: payload, max_tokens: maxTokens, temperature, stream: true },
+    { signal, model: hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model },
+  );
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

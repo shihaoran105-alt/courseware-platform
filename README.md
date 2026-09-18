@@ -119,6 +119,45 @@ AI 要按「这些知识本身该怎么讲清楚」重新组织一遍，
 
 ---
 
+## 读页面截图：图表和表格也能看懂
+
+只把 PDF / PPTX 的**文字层**发给模型有两个硬伤：
+
+- **图** —— 电路图、框图、照片、流程图，文字层里什么都没有，模型完全看不到
+- **表格** —— 文字层会把单元格挤成一坨。实测有份课件的表头被解析成
+  `SignedOne'sTwo's magnitudecomplementcomplement`，这种输入模型当然读不出来
+
+所以生成时会把**每一页渲染成图片**一起发过去。实测效果：一份实验指导里的
+流程图被正确读出来了 —— 模型能说出「4 个空白矩形框、箭头从第 4 个框下方指回第 1 个框」，
+而文字层里根本没有这段信息。
+
+### 关于模型
+
+**必须用支持图片的模型。** 这里有个坑：`deepseek-v4-pro` 不认图片，
+收到图会回「[Unsupported Image]」。实测能读图的是 `deepseek-flash`。
+
+所以带图的调用会自动切到视觉模型（默认 `deepseek-flash`），纯文字调用仍然用你配的模型：
+
+```bash
+export VISION_MODEL=deepseek-flash   # 换别的视觉模型就改这里
+```
+
+生成的记录里会如实写下 `visionModel` 和 `pagesRead`，方便核对成本。
+
+### 成本
+
+一页图约 **400–1300 tokens**（看页面密度），比重新生成一遍便宜得多。
+「生成讲解内容」弹窗里有一个「**连页面截图一起读**」开关，默认开；
+关掉就退回纯文字模式。
+
+### 依赖
+
+不需要装新东西：用项目里已经带着的 pdf.js + 系统上的 Chrome 渲染，
+结果按文件缓存在 `data/cache/pages/`，同一份课件重跑不会重复渲染。
+（纯静态版在浏览器里用 pdf.js 渲染，同样不需要服务端。）
+
+---
+
 ## 中英对照：生成时选语言
 
 点「开始讲解分析」的弹窗里，除了勾模式，还要选**用什么语言生成**：
@@ -767,6 +806,8 @@ courseware-platform/
 │   ├── version.mjs             读 version.json（版本号 & 更新历史）
 │   ├── stt.mjs                 语音转写：本地 whisper.cpp / 讯飞 / Groq / OpenAI 自动择优
 │   ├── render.mjs              预览 PDF 生成（PDF 直传，Office 走 LibreOffice headless）
+│   ├── render-pages.mjs        页面 → JPEG（pdf.js + headless Chrome，交给视觉模型读图）
+│   ├── raster.html             render-pages 用的渲染页（只在 headless Chrome 里跑）
 │   ├── media-tools.mjs         ffmpeg 探测、时长探测、音轨提取与切分
 │   ├── export.mjs              分析结果 → Markdown
 │   ├── extract/                文件解析层（Node）

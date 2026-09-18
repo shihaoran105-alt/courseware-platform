@@ -19,6 +19,7 @@ import {
 import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
 import { normalizeStages } from './stages.mjs';
+import { chromeState, rasterizePdf } from './render-pages.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -524,6 +525,38 @@ app.get('/api/projects/:id/files/:fileId/text', (req, res) => {
 
 /* -------------------------------- 分析 -------------------------------- */
 
+/**
+ * 把项目里的文档类文件逐页渲染成截图。
+ * PDF 用文件本身；PPTX / DOCX 等用上传时生成好的预览 PDF（LibreOffice 转过的那份）。
+ * @returns {Promise<Array<{label:string, page:number, dataUrl:string, file:string}>>}
+ */
+async function collectPageImages({ project, emit = () => {} }) {
+  const out = [];
+  const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
+  const multi = docs.length > 1;
+
+  for (const f of docs) {
+    // previewPdf 是 URL（/media/<pid>/<id>.pdf），要还原成磁盘路径
+    const disk = path.join(MEDIA_DIR, project.id, path.basename(f.previewPdf));
+    if (!fs.existsSync(disk)) continue;
+    try {
+      const r = await rasterizePdf({ pdfPath: disk, cacheKey: f.storedName || f.id, onProgress: emit });
+      for (const p of r.pages) {
+        out.push({
+          file: f.originalName,
+          page: p.page,
+          // 位置标记要和 pageListFor 生成的标签一致，narration 才能按页对上
+          label: multi ? `第 ${p.page} 页｜${f.originalName}` : `第 ${p.page} 页`,
+          dataUrl: p.dataUrl,
+        });
+      }
+    } catch (err) {
+      emit(`「${f.originalName}」转图片失败，跳过：${err.message}`);
+    }
+  }
+  return out;
+}
+
 app.post('/api/projects/:id/analyze', async (req, res) => {
   const project = editableProjectOr404(req, res);
   if (!project) return;
@@ -561,6 +594,27 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
     // 前端弹窗里勾了哪些模式就只跑哪些；没传（老客户端）= 全跑
     const only = normalizeStages(req.body?.stages);
 
+    /**
+     * 把课件页面渲染成截图，一起发给模型。
+     *
+     * 文字层读不出来的东西 —— 电路图、框图、照片，以及被挤成一坨的表格 ——
+     * 只能靠截图。渲染失败不影响流程，退化成原来的纯文本模式。
+     */
+    let pageImages = [];
+    if (req.body?.readPages !== false && chromeState().available) {
+      try {
+        pageImages = await collectPageImages({ project, emit: (message) =>
+          stream.send({ type: 'stage-detail', stage: 'analysis', message }) });
+      } catch (err) {
+        stream.send({
+          type: 'stage-detail',
+          stage: 'analysis',
+          level: 'warn',
+          message: `页面截图没生成出来，这次按纯文字读：${err.message}`,
+        });
+      }
+    }
+
     // 生成语言：zh / en / bilingual（中英对照）
     // 对照模式要跑两遍 —— 一遍中文一遍英文，分别存下来，前端上下叠着显示。
     // 之所以跑两遍而不是让模型一次输出两种语言：所有阶段的 JSON 体积都会翻倍，
@@ -576,6 +630,7 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
         // 上传了上课录像 → 讲解稿以录像为准，这一轮不生成 narration
         skipNarration: hasVideo,
         only,
+        pageImages,
         emit: (evt) => stream.send({ ...evt, lang, passLabel }),
       });
 

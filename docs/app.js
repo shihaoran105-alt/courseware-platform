@@ -1803,6 +1803,18 @@ function openAnalyzeModal() {
         .join('')}
     </div>`;
 
+  // 读页面截图：默认开。关掉就退回纯文字模式（便宜、但读不到图表）
+  const readPages = state.readPages !== false;
+  const pagesPicker = `<div class="pick-head"><span>怎么读这份课件</span></div>
+    <label class="stage-opt ${readPages ? 'on' : ''}">
+      <input type="checkbox" id="readPagesChk" ${readPages ? 'checked' : ''}>
+      <span class="stage-opt-body">
+        <b>连页面截图一起读（推荐）</b>
+        <i>把每一页渲染成图片发给视觉模型，图表、框图、公式和表格结构都能读到。
+           代价是每页约 400–1300 tokens，并且这一步固定用 ${esc(state.config?.visionModel || 'deepseek-flash')} 读图。</i>
+      </span>
+    </label>`;
+
   const rows = stageCatalog()
     .map((s) => {
       // 有上课录像时，逐页讲解稿是转写出来的，不在这里生成
@@ -1835,6 +1847,8 @@ function openAnalyzeModal() {
      }
 
      ${langPicker}
+
+     ${pagesPicker}
 
      <div class="stage-pick-head">
        <span>自己挑要生成哪些</span>
@@ -1892,6 +1906,7 @@ function openAnalyzeModal() {
     if (!keys.length) return;
     const pick = $$('#modalRoot [name="genLang"]').find((r) => r.checked);
     const mode = pick?.value || 'zh';
+    state.readPages = $('#readPagesChk')?.checked !== false;
     closeModal();
     runAnalysis(keys, mode);
   });
@@ -2940,7 +2955,7 @@ async function runAnalysis(stages, langMode = 'zh') {
   try {
     await postSSE(
       `/api/projects/${state.project.id}/analyze`,
-      { name: state.project.name, stages: want, langMode },
+      { name: state.project.name, stages: want, langMode, readPages: state.readPages !== false },
       (evt) => {
       if (evt.type === 'start') {
         state.stages.forEach((s) => {

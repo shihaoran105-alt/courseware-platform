@@ -28,7 +28,7 @@ import { allProjects, currentId, delProject, getProject, putProject, setCurrentI
 import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, roleLabel } from './roles.js';
 import { recommendStages, STAGE_CATALOG, normalizeStages } from './stages.js';
 
-const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', lang: 'cw_lang' };
+const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', lang: 'cw_lang', visionModel: 'cw_vision_model' };
 const lsGet = (k) => {
   try {
     return localStorage.getItem(k) || '';
@@ -83,6 +83,8 @@ function aiConfig() {
     model: lsGet(LS.model) || DEFAULT_MODEL,
     maxInputChars: 90000,
     keySource: 'browser',
+    // 读页面截图必须用支持图片的模型
+    visionModel: lsGet(LS.visionModel) || 'deepseek-flash',
     // 静态版没有服务端，直接从 localStorage 读界面语言
     lang: lsGet(LS.lang) === 'en' ? 'en' : 'zh',
   };
@@ -292,6 +294,53 @@ export async function upload(_projectId, files, onProgress) {
   if (added.length && project.analysis) project.analysisStale = true;
   await save(project);
   return { added, failed, project: slim(project) };
+}
+
+
+/* ------------------------------ 页面截图（浏览器侧） ------------------------------ */
+
+/**
+ * 纯静态版没有服务端，但浏览器里本来就有 pdf.js，所以直接在这里逐页渲染。
+ * 用 JPEG 压到 1100px 宽，一页约 100-250KB —— 和服务器版发给模型的量级一致。
+ */
+async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82, onProgress } = {}) {
+  const lib = window.pdfjsLib;
+  if (!lib) return [];
+  const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
+  const multi = docs.length > 1;
+  const out = [];
+
+  for (const f of docs) {
+    try {
+      const doc = await lib.getDocument(f.previewPdf).promise;
+      for (let n = 1; n <= doc.numPages; n++) {
+        onProgress?.(`正在把课件页面转成图片 ${n}/${doc.numPages}`);
+        const page = await doc.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(3, Math.max(0.4, maxWidth / base.width));
+        const vp = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(vp.width);
+        canvas.height = Math.round(vp.height);
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        out.push({
+          file: f.originalName,
+          page: n,
+          label: multi ? `第 ${n} 页｜${f.originalName}` : `第 ${n} 页`,
+          dataUrl: canvas.toDataURL('image/jpeg', quality),
+        });
+        canvas.width = 0;
+        canvas.height = 0;
+        page.cleanup();
+      }
+    } catch (err) {
+      onProgress?.(`「${f.originalName}」转图片失败，跳过：${err.message}`);
+    }
+  }
+  return out;
 }
 
 /* ------------------------------ JSON 接口 ------------------------------ */
@@ -690,10 +739,23 @@ export async function postSSE(path, body, onEvent) {
     const files = contextFor(project);
     onEvent({ type: 'start', files: project.files.length, contextChars: files.context.length, model: cfg.model });
 
+    // 和服务器版一样：把页面渲染成截图一起发，图表和表格才读得到
+    let pageImages = [];
+    if (body?.readPages !== false) {
+      try {
+        pageImages = await rasterizeProjectPages(project, {
+          onProgress: (message) => onEvent({ type: 'stage-detail', stage: 'analysis', message }),
+        });
+      } catch (err) {
+        onEvent({ type: 'stage-detail', stage: 'analysis', level: 'warn', message: `页面截图没生成出来：${err.message}` });
+      }
+    }
+
     const result = await runFullAnalysis({
       files,
       cfg,
       only: normalizeStages(body?.stages),
+      pageImages,
       emit: onEvent,
     });
     project.analysis = result;
