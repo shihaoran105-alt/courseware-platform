@@ -18,6 +18,7 @@ import {
 } from './config.mjs';
 import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
+import { normalizeStages } from './stages.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -557,12 +558,15 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
       keySource: cfg.keySource,
     });
 
+    // 前端弹窗里勾了哪些模式就只跑哪些；没传（老客户端）= 全跑
+    const only = normalizeStages(req.body?.stages);
     const result = await runFullAnalysis({
       files,
       cfg,
       signal: controller.signal,
       // 上传了上课录像 → 讲解稿以录像为准，这一轮不生成 narration
       skipNarration: hasVideo,
+      only,
       emit: (evt) => stream.send(evt),
     });
 

@@ -882,6 +882,45 @@ ul.clean li::marker { color: var(--ink-4); }
 .modal .hint { font-size: 12.5px; color: var(--ink-3); margin: 0 0 18px; line-height: 1.75; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
 
+/* 「生成讲解内容」弹窗：推荐区 + 模式勾选 */
+.rec-box {
+  margin: 0 0 18px; padding: 12px 14px; border-radius: 9px;
+  background: var(--brand-soft); border: 1px solid var(--brand-line);
+}
+.rec-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 700; color: var(--brand); margin-bottom: 8px;
+}
+.rec-why { margin: 0 0 9px; padding-left: 18px; }
+.rec-why li { font-size: 12.5px; line-height: 1.75; color: var(--ink-2); margin-bottom: 3px; }
+.rec-picked { font-size: 12.5px; color: var(--brand); }
+.rec-picked b { font-weight: 700; }
+
+.stage-pick-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em;
+  color: var(--ink-4); text-transform: uppercase; margin-bottom: 9px;
+}
+.stage-opts { display: flex; flex-direction: column; gap: 6px; }
+.stage-opt {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  padding: 9px 12px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.stage-opt:hover { border-color: var(--brand-line); background: var(--surface); }
+.stage-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.stage-opt.blocked { opacity: .55; cursor: not-allowed; }
+.stage-opt input { margin-top: 3px; flex-shrink: 0; }
+.stage-opt-body { display: flex; flex-direction: column; gap: 2px; }
+.stage-opt-body b { font-size: 13px; font-weight: 620; color: var(--ink); }
+.stage-opt-body i { font-size: 12px; font-style: normal; color: var(--ink-4); line-height: 1.6; }
+.stage-note { color: var(--warn) !important; }
+.stage-hint { margin: 12px 0 0; font-size: 12px; color: var(--ink-4); line-height: 1.7; }
+
+/* 进度里被跳过的阶段 */
+.stage-row.skipped { opacity: .5; }
+.stage-row.skipped .lbl { text-decoration: line-through; }
+
 /* 轻量输入框（新建项目 / 新建分组） */
 .field-label {
   display: block; font-size: 11px; font-weight: 650; color: var(--ink-4);
@@ -1385,3 +1424,19 @@ ul.clean li::marker { color: var(--ink-4); }
 
 /* 上课录像播放 */
 .lecture-video { width: 100%; border-radius: var(--radius); background: #000; display: block; }
+
+
+/* 这次没勾选的节，占位说明 + 一键补生成 */
+.skipped-card {
+  text-align: center; padding: 46px 24px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.skipped-icon {
+  width: 54px; height: 54px; border-radius: 15px; margin-bottom: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-4);
+}
+.skipped-card h3 { margin: 0; font-size: 16px; }
+.skipped-card p { margin: 0; font-size: 13px; color: var(--ink-3); }
+.skipped-note { color: var(--ink-4) !important; font-size: 12px !important; }
+.skipped-card .btn { margin-top: 14px; }

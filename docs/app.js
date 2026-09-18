@@ -1482,8 +1482,26 @@ function renderBody() {
   };
   const mine = state.project.isMine !== false;
   const stage = stageMap[state.tab];
+
+  // 这一节这次没勾选 → 说清楚，并给一个「只生成这一节」的按钮，
+  // 而不是把 { skipped:true } 丢给下面的渲染函数画出个空壳
+  const skippedStage = stage && a[stage]?.skipped ? a[stage] : null;
+  if (skippedStage) {
+    inner = `<div class="card skipped-card">
+      <div class="skipped-icon">${icon('layers', 28)}</div>
+      <h3>这一节这次没有生成</h3>
+      <p>上一步生成时你没有勾选「<b>${esc(stageLabelOf(stage))}</b>」。</p>
+      ${skippedStage.reason ? `<p class="skipped-note">${esc(skippedStage.reason)}</p>` : ''}
+      ${
+        mine
+          ? `<button class="btn primary" id="genThisStage" data-stage="${esc(stage)}">${icon('play', 13)}只生成这一节</button>`
+          : ''
+      }
+    </div>`;
+  }
+
   const rerunBar =
-    stage && mine
+    stage && mine && !skippedStage
       ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
          <button class="btn sm" id="rerunBtn" data-stage="${stage}">${icon('refresh', 14)}重新生成本节</button>
        </div>`
@@ -1498,6 +1516,15 @@ function renderBody() {
          <button class="btn sm primary" id="demoOwn">建立我自己的项目 →</button>
        </div>`;
   body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${rerunBar}${inner}</div>`;
+
+  // 被跳过的节只挂一个「只生成这一节」按钮，别的交互都没东西可挂
+  const genBtn = $('#genThisStage');
+  if (genBtn) {
+    genBtn.addEventListener('click', () => rerunStageUI(genBtn.dataset.stage, genBtn));
+    $('#demoOwn')?.addEventListener('click', () => switchToOwnProject(true));
+    return;
+  }
+
   if (state.tab === 'narration') wireNarration();
   else if (state.tab === 'combine') wireCombine();
   else if (state.tab === 'quiz') wireQuiz();
@@ -1549,9 +1576,27 @@ function renderProgress() {
       <div class="stage-list">
         ${state.stages
           .map((s) => {
-            const cls = s.status === 'start' ? 'active' : s.status === 'done' ? 'done' : s.status === 'error' ? 'error' : '';
-            const mark = s.status === 'start' ? '<span class="spin"></span>' : s.status === 'done' ? icon('check', 13) : s.status === 'error' ? '!' : '·';
-            const sub = s.detail || (s.status === 'error' ? s.message : '');
+            const cls =
+              s.status === 'start'
+                ? 'active'
+                : s.status === 'done'
+                  ? 'done'
+                  : s.status === 'error'
+                    ? 'error'
+                    : s.status === 'skipped'
+                      ? 'skipped'
+                      : '';
+            const mark =
+              s.status === 'start'
+                ? '<span class="spin"></span>'
+                : s.status === 'done'
+                  ? icon('check', 13)
+                  : s.status === 'error'
+                    ? '!'
+                    : s.status === 'skipped'
+                      ? '—'
+                      : '·';
+            const sub = s.detail || (s.status === 'error' || s.status === 'skipped' ? s.message : '');
             return `<div class="stage-row ${cls}">
               <span class="mark">${mark}</span>
               <div><div class="lbl">${esc(s.label)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
@@ -1561,6 +1606,148 @@ function renderProgress() {
           .join('')}
       </div>
     </div>`;
+}
+
+/* ---------------------- 分析前先问清楚要生成什么 ---------------------- */
+
+/** 可选的模式清单（服务端通过 shape.stages 下发，拿不到就用内置兜底） */
+function stageCatalog() {
+  const fromShape = arr(state.project?.shape?.stages);
+  if (fromShape.length) return fromShape;
+  return [
+    { key: 'analysis', label: '课件分析', desc: '通读材料，讲清结构、重点难点，列出核心概念。' },
+    { key: 'examples', label: '事例讲解', desc: '把例题、案例拆成题目 → 分步 → 通用方法 → 易错点。' },
+    { key: 'guide', label: '教学应用', desc: '生成课堂流程、时间分配、互动设计。' },
+    { key: 'narration', label: '逐页讲解稿', desc: '每一页写一段可以照着念的讲稿。' },
+    { key: 'quiz', label: '练习题', desc: '整理出可以做的题，附答案与解析。' },
+    { key: 'lab', label: '做 Lab', desc: '把实验整理成可以照着做的分步实验。' },
+  ];
+}
+
+function stageLabelOf(key) {
+  return stageCatalog().find((s) => s.key === key)?.label || key;
+}
+
+/** 这次该默认勾哪些：第一次跑用推荐，重跑用上次实际生成成功的 */
+function defaultStageSelection() {
+  const an = state.project?.analysis;
+  if (an) {
+    const done = stageCatalog()
+      .map((s) => s.key)
+      .filter((k) => {
+        const v = an[k];
+        // 上次就是跳过的，这次不默认勾上
+        return v && !v.skipped;
+      });
+    if (done.length) return done;
+  }
+  const rec = arr(state.project?.shape?.recommended?.picked);
+  return rec.length ? rec : stageCatalog().map((s) => s.key);
+}
+
+/**
+ * 「生成讲解内容」弹窗。
+ * 上面是「为您推荐」（按项目里有哪些类别的材料推出来），下面是让用户自己勾。
+ */
+function openAnalyzeModal() {
+  if (!state.project?.files?.length) return;
+  if (!state.project.isMine) {
+    toast('这是公开的演示项目，只能查看。请点左侧「新建」建立自己的项目。', 'err');
+    return;
+  }
+  if (!hasUsableKey()) {
+    openGate('分析课件需要 API Key');
+    return;
+  }
+
+  const rec = state.project?.shape?.recommended || {};
+  const picked = new Set(defaultStageSelection());
+  const hasVideo = arr(state.project?.shape?.video).length > 0;
+  const reRun = Boolean(state.project?.analysis);
+
+  const rows = stageCatalog()
+    .map((s) => {
+      // 有上课录像时，逐页讲解稿是转写出来的，不在这里生成
+      const blocked = s.key === 'narration' && hasVideo;
+      const on = picked.has(s.key) && !blocked;
+      return `<label class="stage-opt ${blocked ? 'blocked' : ''}">
+        <input type="checkbox" data-stage="${esc(s.key)}" ${on ? 'checked' : ''} ${blocked ? 'disabled' : ''}>
+        <span class="stage-opt-body">
+          <b>${esc(s.label)}</b>
+          <i>${esc(s.desc)}</i>
+          ${blocked ? '<i class="stage-note">已上传上课录像，这一项会用录像转写生成，不用在这里勾</i>' : ''}
+        </span>
+      </label>`;
+    })
+    .join('');
+
+  openModal(
+    `<h3>${reRun ? '重新生成讲解' : '生成讲解内容'}</h3>
+
+     ${
+       arr(rec.why).length
+         ? `<div class="rec-box">
+              <div class="rec-head">${icon('wand', 13)}为您推荐</div>
+              <ul class="rec-why">${rec.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
+              <div class="rec-picked">推荐勾选：<b>${
+                arr(rec.picked).map((k) => esc(stageLabelOf(k))).join(' · ') || '（无）'
+              }</b></div>
+            </div>`
+         : ''
+     }
+
+     <div class="stage-pick-head">
+       <span>自己挑要生成哪些</span>
+       <span class="spacer"></span>
+       <button class="btn sm ghost" id="stageRec">按推荐</button>
+       <button class="btn sm ghost" id="stageAll">全选</button>
+       <button class="btn sm ghost" id="stageNone">全不选</button>
+     </div>
+     <div class="stage-opts">${rows}</div>
+     <p class="stage-hint">勾得越少越快、越省额度。这次没勾的，之后可以在对应页面点「重新生成本节」单独补。</p>
+
+     <div class="modal-actions">
+       <button class="btn" data-close>取消</button>
+       <button class="btn primary" id="stageGo">开始生成</button>
+     </div>`,
+  );
+
+  const selected = () =>
+    $$('#modalRoot [data-stage]')
+      .filter((c) => c.checked && !c.disabled)
+      .map((c) => c.dataset.stage);
+
+  const syncGo = () => {
+    const n = selected().length;
+    const go = $('#stageGo');
+    if (!go) return;
+    go.disabled = n === 0;
+    go.innerHTML = n ? `${icon('play', 13)}开始生成（${n} 项）` : '至少勾一项';
+  };
+
+  $$('#modalRoot [data-stage]').forEach((c) => c.addEventListener('change', syncGo));
+  $('#stageAll')?.addEventListener('click', () => {
+    $$('#modalRoot [data-stage]').forEach((c) => {
+      if (!c.disabled) c.checked = true;
+    });
+    syncGo();
+  });
+  $('#stageNone')?.addEventListener('click', () => {
+    $$('#modalRoot [data-stage]').forEach((c) => (c.checked = false));
+    syncGo();
+  });
+  $('#stageRec')?.addEventListener('click', () => {
+    const want = new Set(arr(rec.picked));
+    $$('#modalRoot [data-stage]').forEach((c) => (c.checked = want.has(c.dataset.stage) && !c.disabled));
+    syncGo();
+  });
+  $('#stageGo')?.addEventListener('click', () => {
+    const keys = selected();
+    if (!keys.length) return;
+    closeModal();
+    runAnalysis(keys);
+  });
+  syncGo();
 }
 
 /* --------------------------- 1. 课件分析 --------------------------- */
@@ -2401,34 +2588,40 @@ async function askChat(question) {
 
 /* --------------------------- 分析流程 --------------------------- */
 
-async function runAnalysis() {
+/**
+ * 跑分析。
+ * @param {string[]} [stages] 只生成这些模式；不传 = 全都生成（老行为）
+ */
+async function runAnalysis(stages) {
   if (!state.project?.files?.length) return;
   if (!state.project.isMine) {
-    toast('这是公开的演示项目，只能查看。请点左侧「＋ 新建」建立自己的项目。', 'err');
+    toast('这是公开的演示项目，只能查看。请点左侧「新建」建立自己的项目。', 'err');
     return;
   }
   if (!hasUsableKey()) {
     openGate('分析课件需要 API Key');
     return;
   }
+  const want = arr(stages).length ? stages : stageCatalog().map((s) => s.key);
   state.view = 'analyzing';
   state.progress = 0;
-  state.stages = [
-    { key: 'analysis', label: '分析课件内容', status: 'pending' },
-    { key: 'examples', label: '讲解课件中的事例', status: 'pending' },
-    { key: 'guide', label: '生成教学应用方案', status: 'pending' },
-    { key: 'narration', label: '撰写逐页讲解稿', status: 'pending' },
-    { key: 'quiz', label: '整理练习题', status: 'pending' },
-    { key: 'lab', label: '整理实验（Lab）', status: 'pending' },
-  ];
+  // 进度列表按目录顺序列全，没勾的标成 skipped，用户能一眼看出「这次跳过了什么」
+  state.stages = stageCatalog().map((s) => ({
+    key: s.key,
+    label: s.label,
+    status: want.includes(s.key) ? 'pending' : 'skipped',
+    message: want.includes(s.key) ? '' : '未勾选，已跳过',
+  }));
   state.tab = 'overview';
   render();
 
   const t0 = Date.now();
   try {
-    await postSSE(`/api/projects/${state.project.id}/analyze`, { name: state.project.name }, (evt) => {
+    await postSSE(`/api/projects/${state.project.id}/analyze`, { name: state.project.name, stages: want }, (evt) => {
       if (evt.type === 'start') {
-        state.stages.forEach((s) => (s.status = 'pending'));
+        state.stages.forEach((s) => {
+          if (s.status !== 'skipped') s.status = 'pending';
+        });
         render();
       } else if (evt.type === 'stage') {
         const s = state.stages.find((x) => x.key === evt.stage);
@@ -2935,7 +3128,7 @@ function wireStaticEvents() {
     if (e.dataTransfer?.files?.length && !e.target.closest('#dropzone')) handleFiles(e.dataTransfer.files);
   });
 
-  $('#analyzeBtn').addEventListener('click', runAnalysis);
+  $('#analyzeBtn').addEventListener('click', openAnalyzeModal);
   $('#exportBtn').addEventListener('click', () => {
     if (!state.project?.analysis) return;
     if (IS_STATIC) {

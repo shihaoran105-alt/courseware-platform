@@ -26,6 +26,7 @@ import { ACCEPT_HINT, buildContext, classify, extractFile, fileToText } from './
 import { allProjects, currentId, delProject, getProject, putProject, setCurrentId, storageMode } from './store.js';
 // 角色判定和服务器版共用同一份规则，避免两边行为不一致
 import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, roleLabel } from './roles.js';
+import { recommendStages, STAGE_CATALOG, normalizeStages } from './stages.js';
 
 const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model' };
 const lsGet = (k) => {
@@ -125,7 +126,12 @@ function slim(project) {
     labProgress: project.labProgress || {},
     explain: project.explain || {},
     dockChat: project.dockChat || [],
-    shape: projectShape(project.files || []),
+    shape: (() => {
+      const sh = projectShape(project.files || []);
+      sh.stages = STAGE_CATALOG;
+      sh.recommended = recommendStages(project.files || []);
+      return sh;
+    })(),
     files: (project.files || []).map((f) => ({
       id: f.id,
       originalName: f.originalName,
@@ -682,7 +688,12 @@ export async function postSSE(path, body, onEvent) {
     const files = contextFor(project);
     onEvent({ type: 'start', files: project.files.length, contextChars: files.context.length, model: cfg.model });
 
-    const result = await runFullAnalysis({ files, cfg, emit: onEvent });
+    const result = await runFullAnalysis({
+      files,
+      cfg,
+      only: normalizeStages(body?.stages),
+      emit: onEvent,
+    });
     project.analysis = result;
     project.analysisStale = false;
     await save(project);

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CACHE_DIR, DATA_DIR, isPublicMode } from './config.mjs';
 import { buildContext } from './extract/index.mjs';
 import { classifyRole, projectShape, roleLabel } from './roles.mjs';
+import { recommendStages, STAGE_CATALOG } from './stages.mjs';
 
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -294,7 +295,14 @@ export function slimProject(project, sid = '') {
     explain: project.explain || {},
     dockChat: project.dockChat || [],
     aiChat: project.chat || [],
-    shape: projectShape(project.files || []),
+    // shape 里顺带把「可选哪些模式、推荐哪些」给前端，
+    // 弹窗就不用自己再猜一遍规则了
+    shape: (() => {
+      const shape = projectShape(project.files || []);
+      shape.stages = STAGE_CATALOG;
+      shape.recommended = recommendStages(project.files || []);
+      return shape;
+    })(),
     files: project.files.map((f) => ({
       id: f.id,
       originalName: f.originalName,

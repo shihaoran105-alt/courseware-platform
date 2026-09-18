@@ -122,7 +122,7 @@ export async function generateNarration({ files, cfg, emit = () => {}, signal, o
  * @param {object} opts.cfg 运行时配置
  * @param {(evt:object)=>void} opts.emit 进度回调
  */
-export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, skipNarration = false }) {
+export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, skipNarration = false, only = null }) {
   const started = Date.now();
   const context = files.context;
   const summary = fileSummary(files.list);
@@ -236,8 +236,27 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
     },
   ];
 
+  // 用户只勾了一部分模式时，没勾的直接标记跳过，别让进度条和结果里出现空洞
+  const selected = Array.isArray(only) && only.length ? new Set(only) : null;
+  if (selected) {
+    for (const s of stages) {
+      if (selected.has(s.key)) continue;
+      result[s.key] = { skipped: true, reason: '这次没有勾选这个模式' };
+      emit({
+        type: 'stage',
+        stage: s.key,
+        label: s.label,
+        status: 'skipped',
+        ms: 0,
+        progress: 0,
+        message: '未勾选，已跳过',
+      });
+    }
+  }
+
   // 有上课录像时，讲解稿由录像转写产生，这里不再重复生成
-  const active = skipNarration ? stages.filter((s) => s.key !== 'narration') : stages;
+  let active = skipNarration ? stages.filter((s) => s.key !== 'narration') : stages;
+  if (selected) active = active.filter((s) => selected.has(s.key));
   if (skipNarration) {
     result.narration = { segments: [], skipped: true, reason: '已上传上课录像，讲解稿将以录像转写为准' };
     emit({
@@ -249,6 +268,14 @@ export async function runFullAnalysis({ files, cfg, emit = () => {}, signal, ski
       progress: 0,
       message: '已跳过：将以上课录像的转写为准',
     });
+  }
+
+  // 极端情况：只勾了 narration、但项目里有上课录像 → 一个阶段都不剩。
+  // 直接收尾，别让下面的 totalWeight 变成 0 再去除。
+  if (!active.length) {
+    result.elapsedMs = Date.now() - started;
+    emit({ type: 'done', elapsedMs: result.elapsedMs, skippedAll: true });
+    return result;
   }
 
   const totalWeight = active.reduce((n, s) => n + s.weight, 0);

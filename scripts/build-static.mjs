@@ -56,7 +56,11 @@ compileModule(path.join(ROOT, 'server/export.mjs'), path.join(OUT, 'engine/expor
 compileModule(path.join(ROOT, 'server/providers.mjs'), path.join(OUT, 'engine/providers.js'));
 // 角色判定和服务器版共用；静态版靠它才能按「课件/习题/实验/标准答案」分流
 compileModule(path.join(ROOT, 'server/roles.mjs'), path.join(OUT, 'engine/roles.js'));
-log('引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js');
+// 模式清单与推荐：前端弹窗和静态版引擎共用同一份
+compileModule(path.join(ROOT, 'server/stages.mjs'), path.join(OUT, 'engine/stages.js'), [
+  ["from './roles.mjs'", "from './roles.js'"],
+]);
+log('引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js / stages.js');
 
 // ---------- 3. 静态版专属引擎 ----------
 for (const f of ['extract.js', 'store.js', 'backend.js']) {
