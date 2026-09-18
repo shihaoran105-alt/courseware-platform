@@ -1,6 +1,6 @@
 {
   "name": "courseware-platform",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "课件讲解平台 — 上传课件，自动分析内容、讲解事例、生成教学应用方案，并支持在线做题与做 Lab",
@@ -12,7 +12,10 @@
     "demo": "node scripts/mark-demo.mjs",
     "build:static": "node scripts/build-static.mjs",
     "preview:static": "node scripts/serve-static.mjs",
-    "test:extract": "node scripts/test-extract.mjs"
+    "test:extract": "node scripts/test-extract.mjs",
+    "version:show": "node scripts/bump-version.mjs show",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:patch": "node scripts/bump-version.mjs patch"
   },
   "engines": {
     "node": ">=20"
