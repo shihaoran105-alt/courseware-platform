@@ -1662,7 +1662,7 @@ async function rerunStageUI(stage, btn) {
   try {
     const res = await api(`/api/projects/${state.project.id}/rerun`, {
       method: 'POST',
-      body: JSON.stringify({ stage }),
+      body: JSON.stringify({ stage, readPages: state.readPages !== false }),
     });
     state.project.analysis = state.project.analysis || {};
     state.project.analysis[stage] = res.data;

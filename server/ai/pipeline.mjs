@@ -96,15 +96,31 @@ export async function generateNarration({
   const chunks = chunkBlocks(files.list);
   if (!chunks.length) return { segments: [] };
   const segments = [];
-  // 按块的位置标记去页面截图里找对应的那张，逐段一起发过去
+  /**
+   * 页面截图的查找表。
+   * 主键用「文件名 + 页码」—— 多份文件时 pageImages 的 label 是「第 N 页｜文件名」，
+   * 而 chunkBlocks 里的块只有「第 N 页」，光比标签会全部对不上（曾经因此一张图都没发出去）。
+   * 再留一份按标签的兜底，覆盖单文件的老情况。
+   */
+  const byFilePage = new Map();
   const byLabel = new Map();
   for (const p of pageImages || []) {
-    if (p?.label) byLabel.set(String(p.label).replace(/\s+/g, ''), p);
+    if (!p) continue;
+    if (p.file && p.page != null) byFilePage.set(`${p.file}#${p.page}`, p);
+    const short = String(p.label || '').split('｜')[0].replace(/\s+/g, '');
+    if (short && !byLabel.has(short)) byLabel.set(short, p);
   }
-  const pagesOfChunk = (chunk) =>
-    (chunk.blocks || [])
-      .map((b) => byLabel.get(String(b.label || '').replace(/\s+/g, '')))
-      .filter(Boolean);
+  const pagesOfChunk = (chunk) => {
+    const out = [];
+    for (const b of chunk.blocks || []) {
+      const page = Number(b.page ?? (String(b.label || '').match(/\d+/) || [])[0]);
+      const hit =
+        (chunk.file && Number.isFinite(page) ? byFilePage.get(`${chunk.file}#${page}`) : null) ||
+        byLabel.get(String(b.label || '').replace(/\s+/g, ''));
+      if (hit) out.push(hit);
+    }
+    return out;
+  };
 
   for (let i = 0; i < chunks.length; i++) {
     emit({
@@ -259,7 +275,7 @@ export async function runFullAnalysis({
       key: 'narration',
       label: '逐页讲解',
       weight: 12,
-      run: () => generateNarration({ files, cfg, emit, signal, onUsage: addUsage }),
+      run: () => generateNarration({ files, cfg, emit, signal, onUsage: addUsage, pageImages: allPages() }),
     },
     {
       key: 'summary',
@@ -393,14 +409,23 @@ export async function runFullAnalysis({
 }
 
 /** 单个阶段重跑（前端「重新生成」按钮用） */
-export async function rerunStage({ stage, files, cfg, signal }) {
+export async function rerunStage({ stage, files, cfg, signal, pageImages = [] }) {
   const context = files.context;
   const summary = fileSummary(files.list);
+  // 单节重跑同样要带页面截图，否则用户点「重新生成本节」得到的还是纯文字版本
+  const allPages = () => pageImages || [];
+  const imgsFor = (list) => (list || []).map((p) => p.dataUrl).filter(Boolean);
+  const withPages = (prompt, list) =>
+    list && list.length
+      ? `${prompt}\n\n【课件页面截图】\n按顺序附上了这些页面：${list.map((p) => p.label || `第 ${p.page} 页`).join('、')}\n` +
+        `文字层读不出来的内容（图表、框图、公式、表格结构、版面关系）请直接看这些截图，以截图为准。`
+      : prompt;
   switch (stage) {
     case 'analysis': {
       const { data } = await completeJSON(cfg, {
         system: ANALYZE_SYSTEM,
-        user: analyzeUser(context, summary),
+        images: imgsFor(allPages()),
+        user: withPages(analyzeUser(context, summary), allPages()),
         maxTokens: 8000,
         signal,
       });
@@ -409,7 +434,8 @@ export async function rerunStage({ stage, files, cfg, signal }) {
     case 'examples': {
       const { data } = await completeJSON(cfg, {
         system: EXAMPLES_SYSTEM,
-        user: examplesUser(context, summary),
+        images: imgsFor(allPages()),
+        user: withPages(examplesUser(context, summary), allPages()),
         maxTokens: 8000,
         signal,
       });
@@ -418,18 +444,20 @@ export async function rerunStage({ stage, files, cfg, signal }) {
     case 'guide': {
       const { data } = await completeJSON(cfg, {
         system: GUIDE_SYSTEM,
-        user: guideUser(context, summary),
+        images: imgsFor(allPages()),
+        user: withPages(guideUser(context, summary), allPages()),
         maxTokens: 8000,
         signal,
       });
       return data;
     }
     case 'narration':
-      return generateNarration({ files, cfg, signal });
+      return generateNarration({ files, cfg, signal, pageImages: allPages() });
     case 'quiz': {
       const { data } = await completeJSON(cfg, {
         system: QUIZ_SYSTEM,
-        user: quizUser(context, summary, answerKeyExcerpt(files, {}).text),
+        images: imgsFor(allPages()),
+        user: withPages(quizUser(context, summary, answerKeyExcerpt(files, {}).text), allPages()),
         maxTokens: 8000,
         signal,
       });
@@ -438,7 +466,8 @@ export async function rerunStage({ stage, files, cfg, signal }) {
     case 'lab': {
       const { data } = await completeJSON(cfg, {
         system: LAB_SYSTEM,
-        user: labUser(context, summary),
+        images: imgsFor(allPages()),
+        user: withPages(labUser(context, summary), allPages()),
         maxTokens: 8000,
         signal,
       });
@@ -447,7 +476,8 @@ export async function rerunStage({ stage, files, cfg, signal }) {
     case 'summary': {
       const { data } = await completeJSON(cfg, {
         system: SUMMARY_SYSTEM,
-        user: summaryUser(context, summary),
+        images: imgsFor(allPages()),
+        user: withPages(summaryUser(context, summary), allPages()),
         maxTokens: 8000,
         signal,
       });
@@ -500,9 +530,10 @@ export async function dockAsk({ files, cfg, question, attachments = [], history 
 }
 
 /** 批改一道题：学生答案 → 判定 + 分数 + 讲解 */
-export async function gradeAnswer({ cfg, question, studentAnswer, signal }) {
+export async function gradeAnswer({ cfg, question, studentAnswer, signal, pageImages = [] }) {
   const { data, usage } = await completeJSON(cfg, {
     system: GRADE_SYSTEM,
+    images: (pageImages || []).map((p) => p.dataUrl).filter(Boolean),
     user: gradeUser({ question, studentAnswer }),
     maxTokens: 3000,
     temperature: 0.2,
@@ -512,9 +543,10 @@ export async function gradeAnswer({ cfg, question, studentAnswer, signal }) {
 }
 
 /** 检查学生提交的实验记录 */
-export async function checkLab({ cfg, lab, records, signal }) {
+export async function checkLab({ cfg, lab, records, signal, pageImages = [] }) {
   const { data, usage } = await completeJSON(cfg, {
     system: LABCHECK_SYSTEM,
+    images: (pageImages || []).map((p) => p.dataUrl).filter(Boolean),
     user: labCheckUser({ lab, records }),
     maxTokens: 3500,
     temperature: 0.2,
@@ -617,7 +649,17 @@ export function answerKeyExcerpt(files, target = {}, maxChars = 12000) {
  * 结合课件原文讲解一道题。
  * 同时返回 usedExcerpt，前端可以把「课件原文」和「AI 讲解」并排展示。
  */
-export async function explainQuestion({ cfg, question, files, concepts, title, signal, answerKey, answerKeyFrom }) {
+export async function explainQuestion({
+  cfg,
+  question,
+  files,
+  concepts,
+  title,
+  signal,
+  answerKey,
+  answerKeyFrom,
+  pageImages = [],
+}) {
   const excerpt = focusExcerpt(files, question.location);
   // 调用方没显式给答案册时，自己从项目里找一份（答案册和题目按文件名配对）
   let keyText = answerKey;
@@ -627,9 +669,14 @@ export async function explainQuestion({ cfg, question, files, concepts, title, s
     keyText = found.text;
     keyFrom = found.from;
   }
+  // 题目里经常带着表格/图（「完成下表」这类），只发文字层等于让模型对着空白讲
+  const pages = pickPagesFor(question.location, pageImages);
   const { data, usage } = await completeJSON(cfg, {
     system: EXPLAIN_SYSTEM,
-    user: explainUser({ question, excerpt, concepts, analysisTitle: title, answerKey: keyText, answerKeyFrom: keyFrom }),
+    images: pages.map((p) => p.dataUrl).filter(Boolean),
+    user:
+      explainUser({ question, excerpt, concepts, analysisTitle: title, answerKey: keyText, answerKeyFrom: keyFrom }) +
+      (pages.length ? `\n\n【相关页面截图】\n${pages.map((p) => p.label).join('、')}（以此为准）` : ''),
     maxTokens: 6000,
     temperature: 0.25,
     signal,
@@ -638,6 +685,22 @@ export async function explainQuestion({ cfg, question, files, concepts, title, s
 }
 
 
+
+/**
+ * 按位置标记从页面截图里挑出相关的那几张。
+ * location 可能是「第 3 页」，也可能是「第 3 页｜文件名」，两种都认。
+ */
+export function pickPagesFor(locations, pageImages = []) {
+  const list = Array.isArray(locations) ? locations : [locations];
+  const want = new Set();
+  for (const loc of list) {
+    const s = String(loc || '');
+    const n = (s.match(/第\s*(\d+)\s*页/) || [])[1];
+    if (n) want.add(Number(n));
+  }
+  if (!want.size) return [];
+  return (pageImages || []).filter((p) => want.has(Number(p.page)));
+}
 
 /* ---------------------- 上课录像 → 逐页讲解稿 ---------------------- */
 
@@ -748,7 +811,16 @@ export async function translateSegments({ cfg, segments, signal }) {
  * 给「录像没讲到」的页面补写讲解稿。
  * 必须分批：一次几十页会超出 max_tokens，输出会被截断成不完整的 JSON。
  */
-export async function fillMissingScripts({ cfg, files, segments, signal, onUsage = () => {}, emit = () => {}, batchSize = 8 }) {
+export async function fillMissingScripts({
+  cfg,
+  files,
+  segments,
+  signal,
+  onUsage = () => {},
+  emit = () => {},
+  batchSize = 8,
+  pageImages = [],
+}) {
   const need = segments.filter((s) => s.aiFilled);
   if (!need.length) return segments;
 
@@ -800,8 +872,10 @@ export async function fillMissingScripts({ cfg, files, segments, signal, onUsage
       )
       .join('\n\n');
 
+    const batchPages = pickPagesFor(batch.map((s) => s.location), pageImages);
     const { data, usage } = await completeJSON(cfg, {
       system: NARRATION_SYSTEM,
+      images: batchPages.map((p) => p.dataUrl).filter(Boolean),
       user:
         '下面是课件中「课堂录像没有讲到」的几页。请为每一页写一段讲解稿，输出 JSON。\n\n' +
         '【这些页】\n' + pageText + '\n\n' +
@@ -811,7 +885,12 @@ export async function fillMissingScripts({ cfg, files, segments, signal, onUsage
         '- 必须覆盖上面列出的每一页，一页一条，不要漏。\n' +
         '- location 只照抄【】里的位置标记，不要带标题、不要带原文、不要加任何其他文字。\n' +
         '- 讲解稿必须依据「原文」写，可以引用其中的公式、寄存器名、步骤编号。\n' +
-        '- 原文里有的信息就正常讲解，不要写「课件未提供」；只有原文确实为空时才简短说明。',
+        '- 原文里有的信息就正常讲解，不要写「课件未提供」；只有原文确实为空时才简短说明。' +
+        (batchPages.length
+          ? `\n\n【这几页的截图】\n${batchPages
+              .map((p) => p.label)
+              .join('、')}\n文字层可能是空的（这一页只有图表），请直接看截图来写讲解稿。`
+          : ''),
       maxTokens: 6000,
       signal,
     });

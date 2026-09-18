@@ -30,6 +30,29 @@ const CHROME_CANDIDATES = [
   '/usr/bin/chromium-browser',
 ];
 
+/**
+ * 页面对象。dataUrl 做成**惰性**的：一份 95 页的课件全量转 base64 是十几 MB，
+ * 而批改一道题、精讲一道题往往只需要其中一两页。只有真正被读到的页才编码。
+ */
+function lazyPage({ page, file }) {
+  let memo = '';
+  return {
+    page,
+    file,
+    get bytes() {
+      try {
+        return fs.statSync(file).size;
+      } catch {
+        return 0;
+      }
+    },
+    get dataUrl() {
+      if (!memo) memo = `data:image/jpeg;base64,${fs.readFileSync(file).toString('base64')}`;
+      return memo;
+    },
+  };
+}
+
 const PAGE_CACHE_DIR = path.join(CACHE_DIR, 'pages');
 fs.mkdirSync(PAGE_CACHE_DIR, { recursive: true });
 
@@ -165,15 +188,7 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress }) {
     .map((f) => ({ page: Number(f.match(/^p(\d+)\.jpg$/)[1]), file: path.join(dir, f) }))
     .sort((a, b) => a.page - b.page);
   if (cached.length) {
-    return {
-      pages: cached.map((c) => ({
-        page: c.page,
-        file: c.file,
-        bytes: fs.statSync(c.file).size,
-        dataUrl: `data:image/jpeg;base64,${fs.readFileSync(c.file).toString('base64')}`,
-      })),
-      fromCache: true,
-    };
+    return { pages: cached.map(lazyPage), fromCache: true };
   }
 
   const { srv, port } = await startAssetServer(pdfPath);
@@ -227,7 +242,7 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress }) {
         const b64 = String(item.dataUrl).split(',')[1] || '';
         const file = path.join(dir, `p${item.page}.jpg`);
         fs.writeFileSync(file, Buffer.from(b64, 'base64'));
-        pages.push({ page: item.page, file, bytes: fs.statSync(file).size, dataUrl: item.dataUrl });
+        pages.push(lazyPage({ page: item.page, file }));
       }
     }
     pages.sort((a, b) => a.page - b.page);

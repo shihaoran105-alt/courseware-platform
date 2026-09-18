@@ -525,6 +525,23 @@ app.get('/api/projects/:id/files/:fileId/text', (req, res) => {
 
 /* -------------------------------- 分析 -------------------------------- */
 
+/** 取这个项目的页面截图；渲染失败就返回空数组（退回纯文字，不阻断功能） */
+const pageCachePerRequest = new Map();
+async function pagesForProject(project) {
+  const key = project.id;
+  if (pageCachePerRequest.has(key)) return pageCachePerRequest.get(key);
+  let out = [];
+  try {
+    if (chromeState().available) out = await collectPageImages({ project });
+  } catch {
+    /* 忽略，退回纯文字 */
+  }
+  pageCachePerRequest.set(key, out);
+  // 只在这个请求内复用，避免项目更新后拿到旧图
+  setTimeout(() => pageCachePerRequest.delete(key), 60000).unref?.();
+  return out;
+}
+
 /**
  * 把项目里的文档类文件逐页渲染成截图。
  * PDF 用文件本身；PPTX / DOCX 等用上传时生成好的预览 PDF（LibreOffice 转过的那份）。
@@ -603,8 +620,10 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
     let pageImages = [];
     if (req.body?.readPages !== false && chromeState().available) {
       try {
-        pageImages = await collectPageImages({ project, emit: (message) =>
-          stream.send({ type: 'stage-detail', stage: 'analysis', message }) });
+        pageImages = await collectPageImages({
+          project,
+          emit: (message) => stream.send({ type: 'stage-detail', stage: 'analysis', message }),
+        });
       } catch (err) {
         stream.send({
           type: 'stage-detail',
@@ -690,13 +709,22 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
   try {
     const files = contextFor(project, cfg.maxInputChars);
     project.analysis = project.analysis || {};
+    // 单节重跑也要带页面截图 —— 用户点「重新生成本节」时最期待的就是图表能被读到
+    let pageImages = [];
+    if (req.body?.readPages !== false && chromeState().available) {
+      try {
+        pageImages = await collectPageImages({ project });
+      } catch {
+        /* 渲染失败就退回纯文字，不阻断重跑 */
+      }
+    }
     // 这个项目是「中英对照」生成的 → 重跑一节也要两种语言都补上，
     // 否则重新生成的那一节会突然只剩中文，对照就断了
     const bilingual = Boolean(project.analysis.analysisEn);
-    const data = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'zh' } });
+    const data = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'zh' }, pageImages });
     project.analysis[stage] = data;
     if (bilingual) {
-      const en = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'en' } });
+      const en = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'en' }, pageImages });
       project.analysis.analysisEn = project.analysis.analysisEn || {};
       project.analysis.analysisEn[stage] = en;
     }
@@ -739,7 +767,13 @@ app.post('/api/projects/:id/grade', async (req, res) => {
   });
 
   try {
-    const { result } = await gradeAnswer({ cfg, question, studentAnswer: answer, signal: controller.signal });
+    const { result } = await gradeAnswer({
+      cfg,
+      question,
+      studentAnswer: answer,
+      signal: controller.signal,
+      pageImages: await pagesForProject(project),
+    });
     project.attempts = project.attempts || {};
     project.attempts[question.id] = { answer, result, at: new Date().toISOString() };
     persist(project);
@@ -815,6 +849,7 @@ app.post('/api/projects/:id/explain', async (req, res) => {
       cfg,
       question,
       files,
+      pageImages: await pagesForProject(project),
       concepts: project.analysis?.analysis?.concepts || [],
       title: project.analysis?.analysis?.title || project.name,
       signal: controller.signal,
@@ -1049,7 +1084,7 @@ app.post('/api/projects/:id/lab', async (req, res) => {
   });
 
   try {
-    const { result } = await checkLab({ cfg, lab, records, signal: controller.signal });
+    const { result } = await checkLab({ cfg, lab, records, signal: controller.signal , pageImages: await pagesForProject(project) });
     entry.result = result;
     project.labProgress[lab.id] = entry;
     persist(project);
