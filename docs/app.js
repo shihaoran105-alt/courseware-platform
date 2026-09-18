@@ -55,8 +55,10 @@ const state = {
   collapsedGroups: new Set(),
   // 右侧 AI 咨询
   dock: { open: true, attachments: [], sending: false },
-  // 版本号：current = 服务器上的版本，loaded = 我这一页的版本
+  // 版本号：current = 服务器上的版本，loaded = 我这一页的版本，
+  // remote = GitHub 上的版本（由服务端后台去拉）
   version: null,
+  versionNotice: '',
 };
 
 /** 服务器是否必须让访客自带 Key */
@@ -445,14 +447,35 @@ async function loadVersion({ initial = false } = {}) {
       history: arr(v.history),
       // 页面刚加载时，当前版本就是「我这一页的版本」
       loaded: initial || !prev ? v.version : prev.loaded,
+      // 远端（GitHub）上的版本，由服务端后台去拉，拉不到就是空的
+      remote: v.remote || null,
     };
     renderVersionChip();
     if (!initial && prev && prev.current !== v.version) {
       toast(`平台已更新到 ${v.version}，点右上角版本号查看更新内容`, 'ok');
     }
+    // 远端出现比本地更新的版本时提示一次（同一条只提示一次，别每 45 秒烦人）
+    const rv = state.version.remote?.version;
+    if (!initial && rv && compareVersion(rv, v.version) > 0 && state.versionNotice !== rv) {
+      state.versionNotice = rv;
+      toast(`GitHub 上已有新版本 v${rv}，点右上角版本号看更新内容`, 'ok');
+    }
   } catch {
     /* 拿不到就当作没有版本信息，不打扰用户 */
   }
+}
+
+/** 右上角该显示什么状态：page = 我这一页旧了；remote = GitHub 上有新版；ok */
+function versionChipState() {
+  const v = state.version;
+  if (!v?.current) return { kind: 'none' };
+  const pageStale = Boolean(v.loaded) && v.loaded !== v.current;
+  const rv = v.remote?.version || '';
+  const remoteNewer = Boolean(rv) && compareVersion(rv, v.current) > 0;
+  // 页面旧了就先解决页面（点一下就能好）；否则看远端有没有新版
+  if (pageStale) return { kind: 'page', from: v.loaded, to: v.current };
+  if (remoteNewer) return { kind: 'remote', from: v.current, to: rv };
+  return { kind: 'ok' };
 }
 
 function renderVersionChip() {
@@ -464,10 +487,18 @@ function renderVersionChip() {
     return;
   }
   el.style.display = '';
-  const stale = Boolean(v.loaded) && v.loaded !== v.current;
-  el.className = 'chip version-chip' + (stale ? ' stale' : '');
-  el.textContent = stale ? `v${v.loaded} → v${v.current}` : `v${v.current}`;
-  el.title = stale ? `有新版本 v${v.current}，点击查看更新内容` : `当前版本 v${v.current}，点击查看更新历史`;
+  const s = versionChipState();
+  el.className = 'chip version-chip' + (s.kind === 'page' || s.kind === 'remote' ? ' stale' : '');
+  if (s.kind === 'page') {
+    el.textContent = `v${s.from} → v${s.to}`;
+    el.title = `服务器上已经是 v${s.to}，点一下更新到这一版`;
+  } else if (s.kind === 'remote') {
+    el.textContent = `v${s.from} → v${s.to}`;
+    el.title = `GitHub 上已发布 v${s.to}，点一下看更新内容`;
+  } else {
+    el.textContent = `v${v.current}`;
+    el.title = `当前版本 v${v.current}，点击查看版本历史与更新检查`;
+  }
 }
 
 /** 列出「比我现在这一页新」的那些版本 */
@@ -492,10 +523,34 @@ function compareVersion(a, b) {
   return 0;
 }
 
+/** 从 raw 地址反推出仓库主页，好给用户一个「去仓库看看」的链接 */
+function repoUrlFrom(rawUrl = '') {
+  const m = String(rawUrl).match(/^https?:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\//);
+  if (m) return `https://github.com/${m[1]}/${m[2]}`;
+  const c = String(rawUrl).match(/^https?:\/\/([^/]+)\.github\.io\/([^/]+)\//);
+  if (c) return `https://github.com/${c[1]}/${c[2]}`;
+  return '';
+}
+
+/** 远端比本地新的那些版本（远端清单里排在前面的就是更新的） */
+function remotePendingChanges() {
+  const v = state.version;
+  const rv = v?.remote?.version || '';
+  if (!rv || compareVersion(rv, v.current) <= 0) return [];
+  const list = arr(v.remote.history);
+  const cut = list.findIndex((h) => h.version === v.current);
+  if (cut === 0) return [];
+  if (cut > 0) return list.slice(0, cut);
+  return list.filter((h) => compareVersion(h.version, v.current) > 0);
+}
+
 function openVersionModal() {
   const v = state.version || {};
+  const s = versionChipState();
   const pending = pendingChanges();
-  const stale = Boolean(v.loaded) && v.loaded !== v.current;
+  const remotePending = remotePendingChanges();
+  const remote = v.remote || {};
+  const repo = repoUrlFrom(remote.url);
 
   const block = (h) => `<h4>
       <span class="ver-tag">v${esc(h.version)}</span>
@@ -504,25 +559,142 @@ function openVersionModal() {
     </h4>
     ${arr(h.changes).length ? `<ul>${h.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}`;
 
-  const body = stale
-    ? `<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
-         你这一页还是 <b>v${esc(v.loaded)}</b>，服务器上已经是 <b>v${esc(v.current)}</b>。
-       </p>
-       <div class="changelog">${pending.map(block).join('') || '<p style="color:var(--ink-4)">（这次更新没有写说明）</p>'}</div>`
-    : `<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
-         当前已是最新版本 <b>v${esc(v.current)}</b>${v.releasedAt ? `（${esc(String(v.releasedAt).slice(0, 10))}）` : ''}。
-       </p>
-       <div class="changelog">${arr(v.history).slice(0, 6).map(block).join('')}</div>`;
+  const parts = [];
+
+  // 一、页面比服务器旧 —— 点一下就解决
+  if (s.kind === 'page') {
+    parts.push(`<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
+        你这一页还是 <b>v${esc(v.loaded)}</b>，服务器上已经是 <b>v${esc(v.current)}</b>。
+      </p>
+      <div class="changelog">${pending.map(block).join('') || '<p style="color:var(--ink-4)">（这次更新没有写说明）</p>'}</div>`);
+  }
+
+  // 二、GitHub 上有更新的版本 —— 自建部署需要自己去拉代码
+  if (s.kind === 'remote' || remotePending.length) {
+    parts.push(`<div class="update-remote">
+      <p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
+        GitHub 上已发布 <b>v${esc(remote.version)}</b>，你这边是 <b>v${esc(v.current)}</b>。
+        这份部署是你自己跑的，需要你手动拉一次代码。
+      </p>
+      <div class="changelog">${remotePending.map(block).join('') || `<p style="color:var(--ink-4)">（远端没有给出更新说明）</p>`}</div>
+      <div class="cmd-box">
+        <div class="cmd-lbl">在你的项目目录里执行</div>
+        <code>git pull</code>
+        <code># 然后重启服务（Ctrl+C 后重新 npm start）</code>
+      </div>
+      ${repo ? `<p style="margin:10px 0 0;font-size:12.5px"><a href="${esc(repo)}" target="_blank" rel="noopener">去 GitHub 仓库看看 ↗</a></p>` : ''}
+    </div>`);
+  }
+
+  // 三、更新检查的配置（本机模式才能改）
+  parts.push(updateCheckBox(remote));
+
+  // 四、都没有 → 版本历史
+  if (s.kind === 'ok' && !remotePending.length) {
+    parts.push(`<p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
+        当前已是最新版本 <b>v${esc(v.current)}</b>${v.releasedAt ? `（${esc(String(v.releasedAt).slice(0, 10))}）` : ''}。
+      </p>
+      <div class="changelog">${arr(v.history).slice(0, 6).map(block).join('')}</div>`);
+  }
+
+  const title =
+    s.kind === 'page' ? '发现新版本' : s.kind === 'remote' || remotePending.length ? 'GitHub 上有新版本' : '版本历史';
 
   openModal(
-    `<h3>${stale ? '发现新版本' : '版本历史'}</h3>
-     ${body}
+    `<h3>${title}</h3>
+     ${parts.join('')}
      <div class="modal-actions">
        <button class="btn" data-close>关闭</button>
-       ${stale ? `<button class="btn primary" id="doUpdate">${icon('download', 13)}更新平台</button>` : ''}
+       ${s.kind === 'page' ? `<button class="btn primary" id="doUpdate">${icon('download', 13)}更新平台</button>` : ''}
      </div>`,
   );
   $('#doUpdate')?.addEventListener('click', doUpdate);
+  wireUpdateCheckBox();
+}
+
+/** 弹窗底部的「更新检查」配置块 */
+function updateCheckBox(remote) {
+  if (remote.configured) {
+    const when = remote.checkedAt ? new Date(remote.checkedAt).toLocaleString('zh-CN') : '还没成功查过';
+    const state = remote.error
+      ? `<span style="color:var(--warn)">上次检查失败：${esc(remote.error)}</span>`
+      : remote.version
+        ? `远端最新：<b>v${esc(remote.version)}</b>`
+        : '等待第一次检查…';
+    return `<div class="upd-check">
+      <div class="upd-row">
+        <span class="upd-lbl">更新检查</span>
+        <code class="upd-url" title="${esc(remote.url)}">${esc(remote.url)}</code>
+      </div>
+      <div class="upd-row upd-meta">${state}　·　上次检查：${esc(when)}</div>
+      <div class="upd-row" style="margin-top:8px">
+        <button class="btn sm" id="updNow">${icon('refresh', 12)}立即检查</button>
+        ${remote.editable === false ? '' : `<button class="btn sm ghost" id="updEdit">修改地址</button>`}
+      </div>
+    </div>`;
+  }
+  if (remote.editable === false) {
+    return `<div class="upd-check"><div class="upd-row upd-meta">本站没有配置更新检查地址。</div></div>`;
+  }
+  return `<div class="upd-check">
+    <div class="upd-row"><span class="upd-lbl">更新检查</span>
+      <span class="upd-meta">填上你 GitHub 仓库里 version.json 的地址，之后就能自动发现新版本</span>
+    </div>
+    <div class="upd-row" style="margin-top:8px">
+      <input type="text" id="updUrl" class="text-input" style="font-size:12.5px"
+        placeholder="https://raw.githubusercontent.com/用户名/仓库/main/version.json">
+      <button class="btn sm primary" id="updSave">保存</button>
+    </div>
+  </div>`;
+}
+
+function wireUpdateCheckBox() {
+  $('#updSave')?.addEventListener('click', async () => {
+    const url = ($('#updUrl')?.value || '').trim();
+    try {
+      await api('/api/settings/update-check', { method: 'PATCH', body: JSON.stringify({ url }) });
+      toast(url ? '已保存，正在检查…' : '已关闭更新检查');
+      await loadVersion();
+      openVersionModal();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+  $('#updNow')?.addEventListener('click', async () => {
+    const btn = $('#updNow');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = SPIN_SVG + '检查中…';
+    }
+    try {
+      const r = await api('/api/version/check', { method: 'POST' });
+      if (r.remote) state.version.remote = r.remote;
+      renderVersionChip();
+      openVersionModal();
+      toast(r.remote?.version ? `远端最新 v${r.remote.version}` : '远端没有返回版本号', r.remote?.error ? 'err' : 'ok');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+  $('#updEdit')?.addEventListener('click', async () => {
+    const cur = state.version?.remote?.url || '';
+    const url = await promptText({
+      title: '更新检查地址',
+      label: 'version.json 的地址',
+      value: cur,
+      placeholder: 'https://raw.githubusercontent.com/用户名/仓库/main/version.json',
+      hint: '留空 = 关闭更新检查。填 GitHub 仓库里的 version.json 的 raw 地址。',
+    });
+    if (url === null) return;
+    try {
+      await api('/api/settings/update-check', { method: 'PATCH', body: JSON.stringify({ url: url.trim() }) });
+      toast(url.trim() ? '已更新地址，正在检查…' : '已关闭更新检查');
+      await loadVersion();
+      openVersionModal();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
 }
 
 /**

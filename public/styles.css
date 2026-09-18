@@ -154,6 +154,40 @@ a:hover { text-decoration: underline; }
 .changelog ul { margin: 0; padding-left: 20px; }
 .changelog li { font-size: 13px; line-height: 1.85; color: var(--ink-2); margin-bottom: 4px; }
 
+/* 自建部署的更新提示：告诉用户这是 GitHub 上的新版本，要自己拉代码 */
+.update-remote {
+  margin-top: 18px; padding: 14px 15px; border-radius: 9px;
+  background: #fffaf0; border: 1px solid #f0e0bd;
+}
+.cmd-box {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  background: #1a2233; color: #dbe6f7;
+}
+.cmd-lbl { font-size: 10.5px; color: #8797b3; letter-spacing: .06em; margin-bottom: 6px; }
+.cmd-box code {
+  display: block; font-size: 12.5px; line-height: 1.8;
+  font-family: var(--mono, ui-monospace, monospace); color: #e6edf7;
+}
+.cmd-box code + code { color: #8797b3; }
+
+/* 弹窗底部的「更新检查」配置 */
+.upd-check {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.upd-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.upd-lbl {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
+  color: var(--ink-4); text-transform: uppercase; flex-shrink: 0;
+}
+.upd-url {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px;
+  padding: 2px 7px; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.upd-meta { font-size: 11.5px; color: var(--ink-4); }
+.upd-row .text-input { flex: 1; min-width: 220px; }
+
 .body {
   display: grid;
   grid-template-columns: 328px 1fr;

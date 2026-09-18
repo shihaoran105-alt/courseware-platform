@@ -17,6 +17,7 @@ import {
   serverKey,
 } from './config.mjs';
 import { VERSION_FILE, readVersion } from './version.mjs';
+import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -1181,9 +1182,44 @@ app.get('/', (_req, res) => {
  * 前端靠这个判断「服务器上的代码是不是比我手上这页新」。
  * 必须每次读盘、且禁止缓存，否则改了版本号页面也发现不了。
  */
-app.get('/api/version', (_req, res) => {
+app.get('/api/version', async (_req, res) => {
   noStore(res);
-  res.json(readVersion());
+  // 远端检查是「后台刷新 + 立刻返回旧值」，所以这里加上它也不会拖慢页面
+  res.json({ ...readVersion(), remote: await remoteStatus() });
+});
+
+/** 强制检查一次远端（「检查更新」按钮用），这次会等网络 */
+app.post('/api/version/check', async (req, res) => {
+  noStore(res);
+  if (isPublicMode() && !req.sid) {
+    res.status(403).json({ error: '公开模式下不允许改服务器配置' });
+    return;
+  }
+  try {
+    res.json({ ...readVersion(), remote: await remoteStatus({ force: true }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** 更新检查地址：只有本机模式能改（这是服务器级配置，不该由访客决定） */
+app.get('/api/settings/update-check', (_req, res) => {
+  noStore(res);
+  res.json({ url: updateCheckUrl(), editable: !isPublicMode() });
+});
+
+app.patch('/api/settings/update-check', (req, res) => {
+  noStore(res);
+  if (isPublicMode()) {
+    res.status(403).json({ error: '公开模式下不允许改服务器配置，请改服务器上的 .env 或 data/config.json' });
+    return;
+  }
+  const url = String(req.body?.url || '').trim();
+  if (url && !isSafeUrl(url)) {
+    res.status(400).json({ error: '地址要以 http:// 或 https:// 开头' });
+    return;
+  }
+  res.json({ ok: true, url: setUpdateCheckUrl(url) });
 });
 
 // 静态版和外部工具也能直接取到这份清单

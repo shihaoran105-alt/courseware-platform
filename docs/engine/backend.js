@@ -307,10 +307,18 @@ export async function api(path, options = {}) {
         version: String(v.version || '0.0.0'),
         releasedAt: v.releasedAt || '',
         history: Array.isArray(v.history) ? v.history : [],
+        // 静态版的页面就是从 GitHub 上拿的，不存在「远端有更新」这回事
+        remote: { configured: false, editable: false, version: '', error: '', checkedAt: 0, stale: false },
         static: true,
       };
     } catch {
-      return { version: '', releasedAt: '', history: [], static: true };
+      return {
+        version: '',
+        releasedAt: '',
+        history: [],
+        remote: { configured: false, editable: false, version: '', error: '', checkedAt: 0, stale: false },
+        static: true,
+      };
     }
   }
 
