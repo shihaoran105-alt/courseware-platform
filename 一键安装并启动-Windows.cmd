@@ -60,6 +60,14 @@ if not exist "node_modules" (
   echo.
 )
 
+call :create_desktop_launcher
+if errorlevel 1 (
+  echo [提示] 桌面启动器创建失败，但不影响平台启动。
+) else (
+  echo 已在桌面创建「启动课件讲解平台.cmd」。
+)
+echo.
+
 echo 正在启动平台...
 echo 网址：http://127.0.0.1:4173
 echo 请保持本窗口打开；按 Ctrl+C 可停止服务。
@@ -79,6 +87,18 @@ if errorlevel 1 exit /b 1
 for /f "usebackq delims=" %%V in (`node -p "Number(process.versions.node.split('.')[0])" 2^>nul`) do set "NODE_MAJOR=%%V"
 if not defined NODE_MAJOR exit /b 1
 if %NODE_MAJOR% LSS 20 exit /b 1
+exit /b 0
+
+:create_desktop_launcher
+set "DESKTOP_DIR="
+for /f "usebackq delims=" %%D in (`powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP_DIR=%%D"
+if not defined DESKTOP_DIR exit /b 1
+if not exist "%DESKTOP_DIR%" exit /b 1
+set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\启动课件讲解平台.cmd"
+>"%DESKTOP_LAUNCHER%" echo @echo off
+>>"%DESKTOP_LAUNCHER%" echo chcp 65001 ^>nul
+>>"%DESKTOP_LAUNCHER%" echo cd /d "%CD%"
+>>"%DESKTOP_LAUNCHER%" echo call "一键安装并启动-Windows.cmd"
 exit /b 0
 
 :failed

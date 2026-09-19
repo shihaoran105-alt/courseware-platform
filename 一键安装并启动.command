@@ -48,5 +48,22 @@ echo "Node.js: $(node --version)"
 echo "npm:     $(npm --version)"
 echo
 
+# 部署完成后在当前用户桌面创建一个固定指向本项目的启动器。
+desktop_dir="${HOME}/Desktop"
+desktop_launcher="${desktop_dir}/启动课件讲解平台.command"
+project_dir="$(pwd -P)"
+
+if [ -d "$desktop_dir" ]; then
+  {
+    echo '#!/usr/bin/env bash'
+    echo '# 课件讲解平台桌面启动器（由安装脚本自动生成）'
+    printf 'cd %q || exit 1\n' "$project_dir"
+    echo 'exec ./一键安装并启动.command'
+  } > "$desktop_launcher"
+  chmod +x "$desktop_launcher"
+  echo "已创建桌面启动器：$desktop_launcher"
+  echo
+fi
+
 # start.sh 会在首次运行时安装 npm 依赖，随后启动服务并打开浏览器。
 exec ./start.sh
