@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal EnableExtensions
 chcp 65001 >nul
 title 课件讲解平台 · 一键安装并启动
@@ -86,19 +86,25 @@ where node >nul 2>nul
 if errorlevel 1 exit /b 1
 for /f "usebackq delims=" %%V in (`node -p "Number(process.versions.node.split('.')[0])" 2^>nul`) do set "NODE_MAJOR=%%V"
 if not defined NODE_MAJOR exit /b 1
+if not defined NODE_MAJOR exit /b 1
 if %NODE_MAJOR% LSS 20 exit /b 1
 exit /b 0
 
+rem ---------------------------------------------------------------
+rem 桌面快捷方式。用 PowerShell 写成带 BOM 的 UTF-8 ——
+rem 用 echo 重定向写出来的 .cmd 不带 BOM，下次双击时 cmd 按系统代码页
+rem （中文系统 GBK）解析，里面的中文会全变成乱码。
+rem ---------------------------------------------------------------
 :create_desktop_launcher
 set "DESKTOP_DIR="
 for /f "usebackq delims=" %%D in (`powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP_DIR=%%D"
 if not defined DESKTOP_DIR exit /b 1
 if not exist "%DESKTOP_DIR%" exit /b 1
 set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\启动课件讲解平台.cmd"
->"%DESKTOP_LAUNCHER%" echo @echo off
->>"%DESKTOP_LAUNCHER%" echo chcp 65001 ^>nul
->>"%DESKTOP_LAUNCHER%" echo cd /d "%CD%"
->>"%DESKTOP_LAUNCHER%" echo call "一键安装并启动-Windows.cmd"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$lines = @('@echo off','chcp 65001 >nul','cd /d \"%CD%\"','call \"一键安装并启动-Windows.cmd\"');" ^
+  "[IO.File]::WriteAllText($env:DESKTOP_LAUNCHER, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, (New-Object Text.UTF8Encoding $true))"
+if errorlevel 1 exit /b 1
 exit /b 0
 
 :failed

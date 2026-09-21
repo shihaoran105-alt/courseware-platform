@@ -15,7 +15,8 @@
     "test:extract": "node scripts/test-extract.mjs",
     "version:show": "node scripts/bump-version.mjs show",
     "version:minor": "node scripts/bump-version.mjs minor",
-    "version:patch": "node scripts/bump-version.mjs patch"
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "build:release": "node scripts/build-release.mjs"
   },
   "engines": {
     "node": ">=20"

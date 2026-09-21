@@ -47,6 +47,14 @@ if [ ! -f "${source_dir}/package.json" ]; then
   echo "安装包结构不正确。"
   exit 1
 fi
+if [ ! -f "${source_dir}/server/index.mjs" ]; then
+  echo "安装包不完整：缺少 server/index.mjs"
+  exit 1
+fi
+if [ ! -f "${source_dir}/server/stages.mjs" ]; then
+  echo "安装包不完整：缺少 server/stages.mjs"
+  exit 1
+fi
 
 mkdir -p "$install_root" "$install_dir"
 
@@ -62,6 +70,11 @@ chmod +x \
   "$install_dir/start.sh" \
   "$install_dir/一键安装并启动.command" \
   "$install_dir/检查更新.command" 2>/dev/null || true
+
+if [ ! -f "${install_dir}/server/stages.mjs" ]; then
+  echo "安装后校验失败：server/stages.mjs 未正确写入"
+  exit 1
+fi
 
 echo
 echo "安装完成，正在启动…"
