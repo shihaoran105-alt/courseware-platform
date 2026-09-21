@@ -14,7 +14,9 @@
         "Windows 的 .cmd 文件补上 UTF-8 BOM：之前没有 BOM，cmd.exe 按系统代码页（中文系统 GBK）解析，中文全乱，含中文的安装路径也会被读错。桌面快捷方式也不再由 echo 生成（那样写出来同样没有 BOM），改由 PowerShell 明确按带 BOM 的 UTF-8 写入",
         "安装器不再写死版本号：改成自动识别同目录下的完整包，以后发版不用再改安装器，也不会出现「安装器找 v1.4.2 但包里是 v1.4.3」这种错",
         "安装包不再夹带 __MACOSX、._* 这类 macOS 垃圾文件；macOS 的 .command 可执行位会正确保留",
-        "发行包改为构建产物（npm run build:release 生成到 dist/），不再提交进仓库"
+        "发行包改为构建产物（npm run build:release 生成到 dist/），不再提交进仓库",
+        "新增《使用指南》两份（Windows / macOS），随安装包一起给用户：从「装 Node + 申请 API Key」到安装、日常使用、备份数据、更新、卸载、常见问题都写了",
+        "补上 Windows 版的「检查更新-Windows.cmd」—— 之前只有 macOS 有更新脚本，Windows 用户只能重装"
       ]
     },
     {

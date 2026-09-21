@@ -39,11 +39,12 @@ const INCLUDE_FILES = [
   'start.sh',
   'macOS安装器.command',
   'Windows安装器.cmd',
-  'macOS安装说明.txt',
-  'Windows安装说明.txt',
   '一键安装并启动.command',
   '一键安装并启动-Windows.cmd',
   '检查更新.command',
+  '检查更新-Windows.cmd',
+  '使用指南-macOS.txt',
+  '使用指南-Windows.txt',
 ];
 
 /** macOS 的垃圾文件，一律不要 */
@@ -148,7 +149,7 @@ const bundles = [
     file: `课件讲解平台-macOS-v${version}.zip`,
     items: [
       ['macOS安装器.command', path.join(ROOT, 'macOS安装器.command')],
-      ['macOS安装说明.txt', path.join(ROOT, 'macOS安装说明.txt')],
+      ['使用指南-macOS.txt', path.join(ROOT, '使用指南-macOS.txt')],
       [payloadName, null], // 用上面已经打好的 buffer
     ],
   },
@@ -156,7 +157,7 @@ const bundles = [
     file: `课件讲解平台-Windows-v${version}.zip`,
     items: [
       ['Windows安装器.cmd', path.join(ROOT, 'Windows安装器.cmd')],
-      ['Windows安装说明.txt', path.join(ROOT, 'Windows安装说明.txt')],
+      ['使用指南-Windows.txt', path.join(ROOT, '使用指南-Windows.txt')],
       [payloadName, null],
     ],
   },
