@@ -4,7 +4,10 @@ chcp 65001 >nul
 title 课件讲解平台 · Windows 安装器
 
 set "INSTALL_DIR=%LOCALAPPDATA%\Programs\课件讲解平台"
-set "PAYLOAD=%~dp0courseware-platform-v1.4.2.zip"
+rem 自动找同目录下的完整包，不写死版本号 ——
+rem 免得发版时忘了改这里，安装器去找一个根本不存在的文件名。
+set "PAYLOAD="
+for %%F in ("%~dp0courseware-platform-v*.zip") do set "PAYLOAD=%%~fF"
 set "WORK_DIR=%TEMP%\courseware-installer-%RANDOM%-%RANDOM%"
 set "SOURCE_DIR=%WORK_DIR%\courseware-platform"
 
@@ -13,8 +16,9 @@ echo   课件讲解平台 · Windows 一键安装
 echo ========================================
 echo.
 
-if not exist "%PAYLOAD%" (
-  echo [错误] 安装包不完整：缺少 courseware-platform-v1.4.2.zip
+if not defined PAYLOAD (
+  echo [错误] 安装包不完整：同目录下找不到 courseware-platform-v*.zip
+  echo 请确认已经把整个压缩包完整解压，并且没有单独移动安装器。
   goto :failed
 )
 

@@ -10,7 +10,7 @@
 【如果双击没反应 / 提示没有执行权限】
 打开「终端」，把下面这行粘进去回车（注意把路径换成你解压出来的文件夹）：
 
-  chmod +x ~/Downloads/课件讲解平台-macOS-v1.4.2/macOS安装器.command
+  chmod +x ~/Downloads/课件讲解平台-macOS-<版本>/macOS安装器.command
 
 然后再双击一次。
 

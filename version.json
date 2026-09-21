@@ -1,10 +1,22 @@
 {
-  "version": "1.4.2",
+  "version": "1.4.3",
   "buildId": "2026-09-21-update-v2",
   "packageUrl": "https://raw.githubusercontent.com/shihaoran105-alt/courseware-platform/main/courseware-platform-v1.4.2.zip",
   "packageSha256": "71b25f93e113eb6326ebe0fc9b893223dfcfe57e7c0c9dd24c4620d32b20322b",
-  "releasedAt": "2026-09-21T06:30:00.000Z",
+  "releasedAt": "2026-09-21T08:42:28.874Z",
   "history": [
+    {
+      "version": "1.4.3",
+      "date": "2026-09-21",
+      "title": "修安装包：中文文件名乱码，以及由此导致的装不上",
+      "changes": [
+        "**这就是 1.4.2 装不上的原因**：完整包里的中文文件名没设 UTF-8 标志位，Windows 按 GBK 解码后变成乱码，安装器最后要调用的启动脚本文件名也跟着乱掉，于是找不到文件、装不上。现在改用 JSZip 打包，会给中文条目正确设置标志位，并加了打包后自动校验，不通过就不许发版",
+        "Windows 的 .cmd 文件补上 UTF-8 BOM：之前没有 BOM，cmd.exe 按系统代码页（中文系统 GBK）解析，中文全乱，含中文的安装路径也会被读错。桌面快捷方式也不再由 echo 生成（那样写出来同样没有 BOM），改由 PowerShell 明确按带 BOM 的 UTF-8 写入",
+        "安装器不再写死版本号：改成自动识别同目录下的完整包，以后发版不用再改安装器，也不会出现「安装器找 v1.4.2 但包里是 v1.4.3」这种错",
+        "安装包不再夹带 __MACOSX、._* 这类 macOS 垃圾文件；macOS 的 .command 可执行位会正确保留",
+        "发行包改为构建产物（npm run build:release 生成到 dist/），不再提交进仓库"
+      ]
+    },
     {
       "version": "1.4.2",
       "date": "2026-09-21",

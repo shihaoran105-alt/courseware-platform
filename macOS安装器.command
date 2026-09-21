@@ -4,7 +4,9 @@ set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 installer_dir="$(cd "$(dirname "$0")" && pwd -P)"
-payload_zip="${installer_dir}/courseware-platform-v1.4.2.zip"
+# 自动找同目录下的完整包，不写死版本号 —— 免得发版时忘了改这里，
+# 安装器去找一个根本不存在的文件名。
+payload_zip="$(find "$installer_dir" -maxdepth 1 -name 'courseware-platform-v*.zip' | head -1)"
 install_root="${HOME}/Applications"
 install_dir="${install_root}/课件讲解平台"
 
@@ -34,7 +36,8 @@ echo "========================================"
 echo
 
 if [ ! -f "$payload_zip" ]; then
-  echo "安装包不完整：缺少 $(basename "$payload_zip")"
+  echo "安装包不完整：同目录下找不到 courseware-platform-v*.zip"
+  echo "请确认已经把整个压缩包完整解压，并且没有单独移动安装器。"
   exit 1
 fi
 
