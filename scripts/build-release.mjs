@@ -15,11 +15,21 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const JSZip = require('jszip');
+
+/**
+ * 固定的条目时间戳。
+ * JSZip 默认用「当前时间」写每个条目的 DOS 时间，于是同样的内容每构建一次
+ * 字节就变一次，SHA-256 也跟着变 —— 而 version.json 里的 packageSha256 必须
+ * 和用户真正下载到的那个文件对得上。写死时间戳之后，只要输入没变，
+ * 出包就是逐字节一致的，sha 也就稳定了。
+ */
+const ZIP_DATE = new Date('2026-01-01T00:00:00Z');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'dist');
@@ -82,13 +92,31 @@ function collect() {
   return files;
 }
 
+/**
+ * 嵌进完整包的 version.json 要去掉 packageSha256。
+ * 否则是个死循环：sha 写在 version.json 里，version.json 又在 zip 里，
+ * 而 sha 正是这个 zip 的摘要 —— 永远对不上。出厂包里 packageUrl 指向自己的
+ * 文件名就够了，真正的校验值由仓库根目录那一份 version.json 提供，
+ * 用户端「检查更新」读的也是那一份。
+ */
+function embeddedVersionJson(buf) {
+  const d = JSON.parse(buf.toString('utf8'));
+  delete d.packageSha256;
+  return Buffer.from(`${JSON.stringify(d, null, 2)}\n`, 'utf8');
+}
+
 /** 加进 zip，并把可执行位写进 external attributes */
 function addToZip(zip, files, prefix) {
   for (const { rel, full } of files) {
-    const buf = fs.readFileSync(full);
+    let buf = fs.readFileSync(full);
+    if (rel === 'version.json') buf = embeddedVersionJson(buf);
     const name = prefix ? `${prefix}/${rel}` : rel;
     // UNIX 平台 + 0755 让解出来之后还能直接双击运行
-    zip.file(name, buf, { unixPermissions: EXEC.test(rel) ? 0o755 : 0o644, createFolders: false });
+    zip.file(name, buf, {
+      unixPermissions: EXEC.test(rel) ? 0o755 : 0o644,
+      createFolders: false,
+      date: ZIP_DATE,
+    });
   }
 }
 
@@ -163,6 +191,7 @@ const payloadSize = await writeZip(payloadZip, payloadPath);
 console.log(`  ✓ ${payloadName}（${(payloadSize / 1024 / 1024).toFixed(1)} MB）`);
 
 const payloadBuf = fs.readFileSync(payloadPath);
+const payloadSha = createHash('sha256').update(payloadBuf).digest('hex');
 
 // ---------- 2 & 3. 两个平台的外层安装包 ----------
 // 外层的文件名可以用中文（它是磁盘上的文件，不在 zip 条目里），
@@ -190,7 +219,11 @@ for (const b of bundles) {
   const zip = new JSZip();
   for (const [name, full] of b.items) {
     const buf = full ? fs.readFileSync(full) : payloadBuf;
-    zip.file(name, buf, { unixPermissions: EXEC.test(name) ? 0o755 : 0o644, createFolders: false });
+    zip.file(name, buf, {
+      unixPermissions: EXEC.test(name) ? 0o755 : 0o644,
+      createFolders: false,
+      date: ZIP_DATE,
+    });
   }
   const size = await writeZip(zip, path.join(OUT, b.file));
   console.log(`  ✓ ${b.file}（${(size / 1024 / 1024).toFixed(1)} MB）`);
@@ -232,6 +265,23 @@ for (const f of [payloadName, ...bundles.map((b) => b.file)]) {
     }
   }
 }
+
+// 出厂包里不能带 packageSha256，否则 sha 和 zip 互为因果，永远对不上
+const embedded = JSON.parse(
+  await (await JSZip.loadAsync(payloadBuf)).file(`${TOP}/version.json`).async('string'),
+);
+if ('packageSha256' in embedded) {
+  failed++;
+  console.log('\n  ✗ 完整包里的 version.json 带了 packageSha256，会导致校验值永远对不上');
+} else {
+  console.log('\n自检：完整包内的 version.json 未携带 packageSha256 ✓');
+}
+
+console.log(`\n完整包 SHA-256：\n  ${payloadSha}`);
+console.log('\n发版步骤：');
+console.log('  · 把上面这个值填进 version.json 的 packageSha256（填完可以放心重新构建，字节不会变）');
+console.log(`  · 上传 dist/${payloadName}，并让 version.json 的 packageUrl 指向它`);
+console.log('  · 用户的「检查更新」读仓库根目录的 version.json，下载后按这个 sha 校验');
 
 console.log(
   failed

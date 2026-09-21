@@ -68,9 +68,17 @@ for (const f of ['extract.js', 'store.js', 'backend.js']) {
   log('引擎  ' + f);
 }
 copy(path.join(SRC, 'boot.js'), path.join(OUT, 'static-boot.js'));
-// 版本清单：静态版靠它检测 GitHub Pages 上有没有新部署
-copy(path.join(ROOT, 'version.json'), path.join(OUT, 'version.json'));
-log('版本  version.json');
+// 版本清单：静态版靠它检测 GitHub Pages 上有没有新部署。
+// 必须去掉 packageSha256 —— docs/ 会被打进完整包，而 packageSha256 又必须等于
+// 完整包的摘要，留着就成了「sha → version.json → docs/version.json → zip → sha」
+// 的死循环，每次构建 sha 都不一样。静态站本身也不读这个字段，校验由服务端的
+// self-update.mjs 读仓库根目录那份 version.json 完成。
+{
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+  delete manifest.packageSha256;
+  fs.writeFileSync(path.join(OUT, 'version.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  log('版本  version.json（已去掉 packageSha256）');
+}
 log('引导  static-boot.js');
 
 // ---------- 4. 第三方库 ----------

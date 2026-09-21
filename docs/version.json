@@ -1,8 +1,7 @@
 {
   "version": "1.4.3",
   "buildId": "2026-09-21-cmd-encoding-fix",
-  "packageUrl": "https://raw.githubusercontent.com/shihaoran105-alt/courseware-platform/main/courseware-platform-v1.4.2.zip",
-  "packageSha256": "71b25f93e113eb6326ebe0fc9b893223dfcfe57e7c0c9dd24c4620d32b20322b",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.4.3/courseware-platform-v1.4.3.zip",
   "releasedAt": "2026-09-21T08:42:28.874Z",
   "history": [
     {
