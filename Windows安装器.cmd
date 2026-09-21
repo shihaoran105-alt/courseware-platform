@@ -1,28 +1,27 @@
-ï»¿@echo off
+@echo off
 setlocal EnableExtensions
-chcp 65001 >nul
-title è¯¾ä»¶è®²è§£å¹³å° Â· Windows å®‰è£…å™¨
+title ¿Î¼ş½²½âÆ½Ì¨ ¡¤ Windows °²×°Æ÷
 
-set "INSTALL_DIR=%LOCALAPPDATA%\Programs\è¯¾ä»¶è®²è§£å¹³å°"
-rem è‡ªåŠ¨æ‰¾åŒç›®å½•ä¸‹çš„å®Œæ•´åŒ…ï¼Œä¸å†™æ­»ç‰ˆæœ¬å· â€”â€”
-rem å…å¾—å‘ç‰ˆæ—¶å¿˜äº†æ”¹è¿™é‡Œï¼Œå®‰è£…å™¨å»æ‰¾ä¸€ä¸ªæ ¹æœ¬ä¸å­˜åœ¨çš„æ–‡ä»¶åã€‚
+set "INSTALL_DIR=%LOCALAPPDATA%\Programs\¿Î¼ş½²½âÆ½Ì¨"
+rem ×Ô¶¯ÕÒÍ¬Ä¿Â¼ÏÂµÄÍêÕû°ü£¬²»Ğ´ËÀ°æ±¾ºÅ ¡ª¡ª
+rem ÃâµÃ·¢°æÊ±ÍüÁË¸ÄÕâÀï£¬°²×°Æ÷È¥ÕÒÒ»¸ö¸ù±¾²»´æÔÚµÄÎÄ¼şÃû¡£
 set "PAYLOAD="
 for %%F in ("%~dp0courseware-platform-v*.zip") do set "PAYLOAD=%%~fF"
 set "WORK_DIR=%TEMP%\courseware-installer-%RANDOM%-%RANDOM%"
 set "SOURCE_DIR=%WORK_DIR%\courseware-platform"
 
 echo ========================================
-echo   è¯¾ä»¶è®²è§£å¹³å° Â· Windows ä¸€é”®å®‰è£…
+echo   ¿Î¼ş½²½âÆ½Ì¨ ¡¤ Windows Ò»¼ü°²×°
 echo ========================================
 echo.
 
 if not defined PAYLOAD (
-  echo [é”™è¯¯] å®‰è£…åŒ…ä¸å®Œæ•´ï¼šåŒç›®å½•ä¸‹æ‰¾ä¸åˆ° courseware-platform-v*.zip
-  echo è¯·ç¡®è®¤å·²ç»æŠŠæ•´ä¸ªå‹ç¼©åŒ…å®Œæ•´è§£å‹ï¼Œå¹¶ä¸”æ²¡æœ‰å•ç‹¬ç§»åŠ¨å®‰è£…å™¨ã€‚
+  echo [´íÎó] °²×°°ü²»ÍêÕû£ºÍ¬Ä¿Â¼ÏÂÕÒ²»µ½ courseware-platform-v*.zip
+  echo ÇëÈ·ÈÏÒÑ¾­°ÑÕû¸öÑ¹Ëõ°üÍêÕû½âÑ¹£¬²¢ÇÒÃ»ÓĞµ¥¶ÀÒÆ¶¯°²×°Æ÷¡£
   goto :failed
 )
 
-echo æ­£åœ¨è§£å‹å¹¶æ£€æŸ¥å®Œæ•´ç¨‹åºåŒ…...
+echo ÕıÔÚ½âÑ¹²¢¼ì²éÍêÕû³ÌĞò°ü...
 if exist "%WORK_DIR%" rmdir /s /q "%WORK_DIR%"
 mkdir "%WORK_DIR%" >nul 2>nul
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -30,25 +29,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
 if errorlevel 1 goto :failed
 
 if not exist "%SOURCE_DIR%\package.json" (
-  echo [é”™è¯¯] å®‰è£…åŒ…ç»“æ„ä¸æ­£ç¡®ï¼šç¼ºå°‘ package.json
+  echo [´íÎó] °²×°°ü½á¹¹²»ÕıÈ·£ºÈ±ÉÙ package.json
   goto :failed
 )
 if not exist "%SOURCE_DIR%\server\index.mjs" (
-  echo [é”™è¯¯] å®‰è£…åŒ…ä¸å®Œæ•´ï¼šç¼ºå°‘ server\index.mjs
+  echo [´íÎó] °²×°°ü²»ÍêÕû£ºÈ±ÉÙ server\index.mjs
   goto :failed
 )
 if not exist "%SOURCE_DIR%\server\stages.mjs" (
-  echo [é”™è¯¯] å®‰è£…åŒ…ä¸å®Œæ•´ï¼šç¼ºå°‘ server\stages.mjs
+  echo [´íÎó] °²×°°ü²»ÍêÕû£ºÈ±ÉÙ server\stages.mjs
   goto :failed
 )
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%" >nul 2>nul
 if not exist "%INSTALL_DIR%" (
-  echo [é”™è¯¯] æ— æ³•åˆ›å»ºå®‰è£…ç›®å½•ï¼š%INSTALL_DIR%
+  echo [´íÎó] ÎŞ·¨´´½¨°²×°Ä¿Â¼£º%INSTALL_DIR%
   goto :failed
 )
 
-echo æ­£åœ¨åˆ é™¤æ—§ç¨‹åºå¹¶ä¿ç•™ç”¨æˆ·æ•°æ®...
+echo ÕıÔÚÉ¾³ı¾É³ÌĞò²¢±£ÁôÓÃ»§Êı¾İ...
 for /d %%D in ("%INSTALL_DIR%\*") do (
   if /I not "%%~nxD"=="data" rmdir /s /q "%%~fD"
 )
@@ -56,53 +55,54 @@ for %%F in ("%INSTALL_DIR%\*") do (
   if exist "%%~fF" if /I not "%%~nxF"==".env" del /f /q "%%~fF"
 )
 
-echo æ­£åœ¨å®‰è£…åˆ°ï¼š%INSTALL_DIR%
+echo ÕıÔÚ°²×°µ½£º%INSTALL_DIR%
 xcopy "%SOURCE_DIR%\*" "%INSTALL_DIR%\" /E /I /H /Y >nul
 if errorlevel 1 goto :failed
 
 if not exist "%INSTALL_DIR%\server\stages.mjs" (
-  echo [é”™è¯¯] å®‰è£…åæ ¡éªŒå¤±è´¥ï¼šserver\stages.mjs æœªæ­£ç¡®å†™å…¥
+  echo [´íÎó] °²×°ºóĞ£ÑéÊ§°Ü£ºserver\stages.mjs Î´ÕıÈ·Ğ´Èë
   goto :failed
 )
-if not exist "%INSTALL_DIR%\ä¸€é”®å®‰è£…å¹¶å¯åŠ¨-Windows.cmd" (
-  echo [é”™è¯¯] å®‰è£…åæ ¡éªŒå¤±è´¥ï¼šç¼ºå°‘å¯åŠ¨è„šæœ¬
+if not exist "%INSTALL_DIR%\Ò»¼ü°²×°²¢Æô¶¯-Windows.cmd" (
+  echo [´íÎó] °²×°ºóĞ£ÑéÊ§°Ü£ºÈ±ÉÙÆô¶¯½Å±¾
   goto :failed
 )
 
 call :create_desktop_launcher
 if errorlevel 1 (
-  echo [æç¤º] æ¡Œé¢å¯åŠ¨å™¨åˆ›å»ºå¤±è´¥ï¼Œä½†ç¨‹åºå·²ç»å®‰è£…å®Œæˆã€‚
+  echo [ÌáÊ¾] ×ÀÃæÆô¶¯Æ÷´´½¨Ê§°Ü£¬µ«³ÌĞòÒÑ¾­°²×°Íê³É¡£
 ) else (
-  echo å·²åœ¨æ¡Œé¢åˆ›å»ºã€Œå¯åŠ¨è¯¾ä»¶è®²è§£å¹³å°ã€ã€‚
+  echo ÒÑÔÚ×ÀÃæ´´½¨¡¸Æô¶¯¿Î¼ş½²½âÆ½Ì¨¡¹¡£
 )
 
 if exist "%WORK_DIR%" rmdir /s /q "%WORK_DIR%"
 echo.
-echo å®‰è£…å®Œæˆï¼Œæ­£åœ¨å¯åŠ¨...
-call "%INSTALL_DIR%\ä¸€é”®å®‰è£…å¹¶å¯åŠ¨-Windows.cmd"
+echo °²×°Íê³É£¬ÕıÔÚÆô¶¯...
+call "%INSTALL_DIR%\Ò»¼ü°²×°²¢Æô¶¯-Windows.cmd"
 exit /b %errorlevel%
 
 rem ---------------------------------------------------------------
-rem æ¡Œé¢å¿«æ·æ–¹å¼ã€‚
-rem æ³¨æ„ï¼š**ä¸èƒ½**ç”¨ echo é‡å®šå‘å»å†™è¿™ä¸ª .cmd â€”â€” é‚£æ ·å†™å‡ºæ¥çš„æ˜¯ä¸å¸¦ BOM çš„
-rem UTF-8ï¼Œä¸‹æ¬¡åŒå‡»æ—¶ cmd ä¼šç”¨ç³»ç»Ÿä»£ç é¡µï¼ˆä¸­æ–‡ç³»ç»Ÿ GBKï¼‰å»è¯»ï¼Œä¸­æ–‡å…¨ä¹±ã€‚
-rem æ‰€ä»¥äº¤ç»™ PowerShell ç”¨ UTF8Encoding($true) å†™ï¼Œæ˜ç¡®å¸¦ä¸Š BOMã€‚
+rem ×ÀÃæ¿ì½İ·½Ê½¡£
+rem ×¢Òâ£º²»ÄÜÓÃ echo ÖØ¶¨ÏòÈ¥Ğ´Õâ¸ö .cmd ¡ª¡ª ÄÇÑùĞ´³öÀ´µÄÊÇ²»´ø BOM µÄ
+rem UTF-8£¬ÏÂ´ÎË«»÷Ê± cmd »áÓÃÏµÍ³´úÂëÒ³£¨ÖĞÎÄÏµÍ³ GBK£©È¥¶Á£¬ÖĞÎÄÈ«ÂÒ¡£
+rem ËùÒÔ½»¸ø PowerShell Ã÷È·°´ GBK£¨´úÂëÒ³ 936£©Ğ´£¬²»´ø BOM¡¢Ò²²»ÇĞ´úÂëÒ³¡£
+rem ´ø BOM »ò chcp 65001 Í¬Ñù»áÈÃ cmd ÔÚÖĞÎÄÏµÍ³ÉÏ½âÎö³ö´í¡£
 rem ---------------------------------------------------------------
 :create_desktop_launcher
 set "DESKTOP_DIR="
 for /f "usebackq delims=" %%D in (`powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP_DIR=%%D"
 if not defined DESKTOP_DIR exit /b 1
 if not exist "%DESKTOP_DIR%" exit /b 1
-set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\å¯åŠ¨è¯¾ä»¶è®²è§£å¹³å°.cmd"
+set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\Æô¶¯¿Î¼ş½²½âÆ½Ì¨.cmd"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('@echo off','chcp 65001 >nul','cd /d \"%INSTALL_DIR%\"','call \"ä¸€é”®å®‰è£…å¹¶å¯åŠ¨-Windows.cmd\"');" ^
-  "[IO.File]::WriteAllText($env:DESKTOP_LAUNCHER, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, (New-Object Text.UTF8Encoding $true))"
+  "$lines = @('@echo off','cd /d \"%INSTALL_DIR%\"','call \"Ò»¼ü°²×°²¢Æô¶¯-Windows.cmd\"');" ^
+  "[IO.File]::WriteAllText($env:DESKTOP_LAUNCHER, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, ([Text.Encoding]::GetEncoding(936)))"
 if errorlevel 1 exit /b 1
 exit /b 0
 
 :failed
 if exist "%WORK_DIR%" rmdir /s /q "%WORK_DIR%"
 echo.
-echo å®‰è£…æœªå®Œæˆï¼Œè¯·æˆªå›¾ä¸Šé¢çš„é”™è¯¯ä¿¡æ¯ã€‚
+echo °²×°Î´Íê³É£¬Çë½ØÍ¼ÉÏÃæµÄ´íÎóĞÅÏ¢¡£
 pause
 exit /b 1

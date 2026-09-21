@@ -126,6 +126,29 @@ function verifyZip(file) {
   return { checked, bad };
 }
 
+// ---------- 0. 前置闸门：Windows 批处理必须是 CRLF + GBK、无 BOM ----------
+// 这三个 .cmd 曾经是纯 LF 换行，cmd.exe 会静默不执行任何东西（用户双击“没反应”）；
+// 也试过 UTF-8 无 BOM 和 UTF-8 带 BOM + chcp 65001，在中文系统上都会乱码或解析失败。
+// 编码一旦回退，用户拿到手就是打不开，所以直接在构建时拦下来。
+const { cmdFiles, inspect } = await import('./fix-cmd-encoding.mjs');
+let cmdBad = 0;
+for (const f of cmdFiles()) {
+  const info = inspect(fs.readFileSync(f));
+  const problems = [];
+  if (info.hasBom) problems.push('有 BOM');
+  if (info.loneLf) problems.push(`${info.loneLf} 处 LF 换行`);
+  if (!info.crlf) problems.push('没有 CRLF 换行');
+  if (!info.isGbk) problems.push('不是 GBK 编码');
+  if (problems.length) {
+    cmdBad++;
+    console.log(`  ✗ ${path.basename(f)}：${problems.join('、')}`);
+  }
+}
+if (cmdBad) {
+  console.log('\n✗ Windows 批处理文件编码不对，先运行：node scripts/fix-cmd-encoding.mjs\n');
+  process.exit(1);
+}
+
 console.log(`\n打包 v${version} → dist/\n`);
 
 const payloadFiles = collect();
@@ -184,6 +207,29 @@ for (const f of [payloadName, ...bundles.map((b) => b.file)]) {
     bad.slice(0, 3).forEach((n) => console.log(`       ${n}`));
   } else {
     console.log(`  ✓ ${f}（${checked} 个中文条目全部带 UTF-8 标志）`);
+  }
+}
+
+// 再查一遍 zip **里面**的 .cmd 字节：源文件对了不代表打包没出错，
+// 而用户双击的就是 zip 里这一份。
+console.log('\n自检：zip 内 .cmd 的换行与编码');
+for (const f of [payloadName, ...bundles.map((b) => b.file)]) {
+  const zip = await JSZip.loadAsync(fs.readFileSync(path.join(OUT, f)));
+  const cmdEntries = Object.keys(zip.files).filter((n) => /\.(cmd|bat)$/i.test(n));
+  for (const name of cmdEntries) {
+    const buf = Buffer.from(await zip.file(name).async('uint8array'));
+    const info = inspect(buf);
+    const problems = [];
+    if (info.hasBom) problems.push('有 BOM');
+    if (info.loneLf) problems.push(`${info.loneLf} 处 LF 换行`);
+    if (!info.crlf) problems.push('没有 CRLF 换行');
+    if (!info.isGbk) problems.push('不是 GBK 编码');
+    if (problems.length) {
+      failed++;
+      console.log(`  ✗ ${f} › ${name}：${problems.join('、')}`);
+    } else {
+      console.log(`  ✓ ${f} › ${name}（CRLF / GBK / 无 BOM）`);
+    }
   }
 }
 

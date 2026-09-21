@@ -1,17 +1,16 @@
-ï»¿@echo off
+@echo off
 setlocal EnableExtensions
-chcp 65001 >nul
-title è¯¾ä»¶è®²è§£å¹³å° Â· ä¸€é”®å®‰è£…å¹¶å¯åŠ¨
+title ¿Î¼ş½²½âÆ½Ì¨ ¡¤ Ò»¼ü°²×°²¢Æô¶¯
 cd /d "%~dp0"
 
 echo ========================================
-echo   è¯¾ä»¶è®²è§£å¹³å° Â· Windows ä¸€é”®å®‰è£…å¹¶å¯åŠ¨
+echo   ¿Î¼ş½²½âÆ½Ì¨ ¡¤ Windows Ò»¼ü°²×°²¢Æô¶¯
 echo ========================================
 echo.
 
 if not exist "package.json" (
-  echo [é”™è¯¯] æœªæ‰¾åˆ° package.jsonã€‚
-  echo è¯·æŠŠæœ¬æ–‡ä»¶æ”¾åœ¨é¡¹ç›®æ ¹ç›®å½•åå†åŒå‡»ã€‚
+  echo [´íÎó] Î´ÕÒµ½ package.json¡£
+  echo Çë°Ñ±¾ÎÄ¼ş·ÅÔÚÏîÄ¿¸ùÄ¿Â¼ºóÔÙË«»÷¡£
   goto :failed
 )
 
@@ -20,28 +19,28 @@ if errorlevel 1 goto :install_node
 goto :node_ready
 
 :install_node
-echo æœªæ£€æµ‹åˆ° Node.js 20 æˆ–æ›´é«˜ç‰ˆæœ¬ã€‚
+echo Î´¼ì²âµ½ Node.js 20 »ò¸ü¸ß°æ±¾¡£
 where winget >nul 2>nul
 if errorlevel 1 goto :manual_node
 
-echo æ­£åœ¨è‡ªåŠ¨å®‰è£… Node.js LTSï¼Œè¯·ç¨å€™...
+echo ÕıÔÚ×Ô¶¯°²×° Node.js LTS£¬ÇëÉÔºò...
 winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
 if errorlevel 1 goto :manual_node
 
-rem åˆ·æ–°å½“å‰çª—å£å¯ç”¨çš„å¸¸è§ Node.js è·¯å¾„ã€‚
+rem Ë¢ĞÂµ±Ç°´°¿Ú¿ÉÓÃµÄ³£¼û Node.js Â·¾¶¡£
 if exist "%ProgramFiles%\nodejs\node.exe" set "PATH=%ProgramFiles%\nodejs;%PATH%"
 if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "PATH=%LOCALAPPDATA%\Programs\nodejs;%PATH%"
 call :check_node
 if errorlevel 1 (
-  echo Node.js å·²å®‰è£…ï¼Œä½†å½“å‰çª—å£å°šæœªè¯†åˆ«ã€‚
-  echo è¯·å…³é—­æœ¬çª—å£ï¼Œç„¶åå†æ¬¡åŒå‡»æœ¬æ–‡ä»¶ã€‚
+  echo Node.js ÒÑ°²×°£¬µ«µ±Ç°´°¿ÚÉĞÎ´Ê¶±ğ¡£
+  echo Çë¹Ø±Õ±¾´°¿Ú£¬È»ºóÔÙ´ÎË«»÷±¾ÎÄ¼ş¡£
   goto :failed
 )
 goto :node_ready
 
 :manual_node
 echo.
-echo æ— æ³•è‡ªåŠ¨å®‰è£… Node.jsã€‚å³å°†æ‰“å¼€å®˜ç½‘ï¼Œè¯·å®‰è£… LTS ç‰ˆåå†æ¬¡åŒå‡»æœ¬æ–‡ä»¶ã€‚
+echo ÎŞ·¨×Ô¶¯°²×° Node.js¡£¼´½«´ò¿ª¹ÙÍø£¬Çë°²×° LTS °æºóÔÙ´ÎË«»÷±¾ÎÄ¼ş¡£
 start "" "https://nodejs.org/zh-cn/download"
 goto :failed
 
@@ -54,7 +53,7 @@ if errorlevel 1 goto :failed
 echo.
 
 if not exist "node_modules" (
-  echo é¦–æ¬¡è¿è¡Œï¼Œæ­£åœ¨å®‰è£…é¡¹ç›®ä¾èµ–...
+  echo Ê×´ÎÔËĞĞ£¬ÕıÔÚ°²×°ÏîÄ¿ÒÀÀµ...
   call npm install --no-audit --no-fund
   if errorlevel 1 goto :failed
   echo.
@@ -62,15 +61,15 @@ if not exist "node_modules" (
 
 call :create_desktop_launcher
 if errorlevel 1 (
-  echo [æç¤º] æ¡Œé¢å¯åŠ¨å™¨åˆ›å»ºå¤±è´¥ï¼Œä½†ä¸å½±å“å¹³å°å¯åŠ¨ã€‚
+  echo [ÌáÊ¾] ×ÀÃæÆô¶¯Æ÷´´½¨Ê§°Ü£¬µ«²»Ó°ÏìÆ½Ì¨Æô¶¯¡£
 ) else (
-  echo å·²åœ¨æ¡Œé¢åˆ›å»ºã€Œå¯åŠ¨è¯¾ä»¶è®²è§£å¹³å°.cmdã€ã€‚
+  echo ÒÑÔÚ×ÀÃæ´´½¨¡¸Æô¶¯¿Î¼ş½²½âÆ½Ì¨.cmd¡¹¡£
 )
 echo.
 
-echo æ­£åœ¨å¯åŠ¨å¹³å°...
-echo ç½‘å€ï¼šhttp://127.0.0.1:4173
-echo è¯·ä¿æŒæœ¬çª—å£æ‰“å¼€ï¼›æŒ‰ Ctrl+C å¯åœæ­¢æœåŠ¡ã€‚
+echo ÕıÔÚÆô¶¯Æ½Ì¨...
+echo ÍøÖ·£ºhttp://127.0.0.1:4173
+echo Çë±£³Ö±¾´°¿Ú´ò¿ª£»°´ Ctrl+C ¿ÉÍ£Ö¹·şÎñ¡£
 echo.
 
 start "" /b powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:4173'"
@@ -86,29 +85,29 @@ where node >nul 2>nul
 if errorlevel 1 exit /b 1
 for /f "usebackq delims=" %%V in (`node -p "Number(process.versions.node.split('.')[0])" 2^>nul`) do set "NODE_MAJOR=%%V"
 if not defined NODE_MAJOR exit /b 1
-if not defined NODE_MAJOR exit /b 1
 if %NODE_MAJOR% LSS 20 exit /b 1
 exit /b 0
 
 rem ---------------------------------------------------------------
-rem æ¡Œé¢å¿«æ·æ–¹å¼ã€‚ç”¨ PowerShell å†™æˆå¸¦ BOM çš„ UTF-8 â€”â€”
-rem ç”¨ echo é‡å®šå‘å†™å‡ºæ¥çš„ .cmd ä¸å¸¦ BOMï¼Œä¸‹æ¬¡åŒå‡»æ—¶ cmd æŒ‰ç³»ç»Ÿä»£ç é¡µ
-rem ï¼ˆä¸­æ–‡ç³»ç»Ÿ GBKï¼‰è§£æï¼Œé‡Œé¢çš„ä¸­æ–‡ä¼šå…¨å˜æˆä¹±ç ã€‚
+rem ×ÀÃæ¿ì½İ·½Ê½¡£ÓÃ PowerShell Ã÷È·°´ GBK£¨´úÂëÒ³ 936£©Ğ´³É²»´ø BOM µÄÎÄ±¾¡£
+rem ÓÃ echo ÖØ¶¨ÏòĞ´³öÀ´µÄ .cmd ÊÇ UTF-8£¬ÏÂ´ÎË«»÷Ê± cmd °´ÏµÍ³´úÂëÒ³
+rem £¨ÖĞÎÄÏµÍ³ GBK£©½âÎö£¬ÀïÃæµÄÖĞÎÄ»áÈ«±ä³ÉÂÒÂë£»
+rem ´ø BOM »ò chcp 65001 Í¬Ñù»áÈÃ cmd ÔÚÖĞÎÄÏµÍ³ÉÏ½âÎö³ö´í¡£
 rem ---------------------------------------------------------------
 :create_desktop_launcher
 set "DESKTOP_DIR="
 for /f "usebackq delims=" %%D in (`powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP_DIR=%%D"
 if not defined DESKTOP_DIR exit /b 1
 if not exist "%DESKTOP_DIR%" exit /b 1
-set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\å¯åŠ¨è¯¾ä»¶è®²è§£å¹³å°.cmd"
+set "DESKTOP_LAUNCHER=%DESKTOP_DIR%\Æô¶¯¿Î¼ş½²½âÆ½Ì¨.cmd"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('@echo off','chcp 65001 >nul','cd /d \"%CD%\"','call \"ä¸€é”®å®‰è£…å¹¶å¯åŠ¨-Windows.cmd\"');" ^
-  "[IO.File]::WriteAllText($env:DESKTOP_LAUNCHER, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, (New-Object Text.UTF8Encoding $true))"
+  "$lines = @('@echo off','cd /d \"%CD%\"','call \"Ò»¼ü°²×°²¢Æô¶¯-Windows.cmd\"');" ^
+  "[IO.File]::WriteAllText($env:DESKTOP_LAUNCHER, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, ([Text.Encoding]::GetEncoding(936)))"
 if errorlevel 1 exit /b 1
 exit /b 0
 
 :failed
 echo.
-echo å®‰è£…æˆ–å¯åŠ¨æœªå®Œæˆï¼Œè¯·æˆªå›¾ä¸Šé¢çš„é”™è¯¯ä¿¡æ¯ã€‚
+echo °²×°»òÆô¶¯Î´Íê³É£¬Çë½ØÍ¼ÉÏÃæµÄ´íÎóĞÅÏ¢¡£
 pause
 exit /b 1
