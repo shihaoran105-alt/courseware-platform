@@ -18,6 +18,7 @@ import {
 } from './config.mjs';
 import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
+import { launchUpdateHelper, prepareUpdate } from './self-update.mjs';
 import { normalizeStages } from './stages.mjs';
 import { chromeState, rasterizePdf } from './render-pages.mjs';
 import {
@@ -1348,6 +1349,34 @@ app.post('/api/version/check', async (req, res) => {
     res.json({ ...readVersion(), remote: await remoteStatus({ force: true }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/** 本机部署一键更新：下载并校验新包，随后由独立进程清理旧程序、安装并重启。 */
+app.post('/api/version/update', async (_req, res) => {
+  noStore(res);
+  if (isPublicMode()) {
+    res.status(403).json({ error: '公开服务不允许访客更新服务器程序' });
+    return;
+  }
+  try {
+    const update = await prepareUpdate();
+    if (!update.updated) {
+      res.json(update);
+      return;
+    }
+    launchUpdateHelper(update.stageRoot, update.version);
+    res.json({
+      updated: true,
+      repair: update.repair,
+      from: update.from,
+      version: update.version,
+      buildId: update.buildId,
+      restarting: true,
+    });
+    setTimeout(() => process.exit(0), 700).unref();
+  } catch (err) {
+    res.status(500).json({ error: err?.message || String(err) });
   }
 });
 

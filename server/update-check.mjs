@@ -8,8 +8,8 @@
  *   1. **绝不阻塞页面**。前端每 45 秒问一次 /api/version，如果每次都等网络，
  *      页面就会被拖死。所以这里只在后台刷新，接口立刻返回上一次的结果。
  *   2. **绝不打扰**。拉不到（断网、仓库私有、没配地址）就当没有更新，静默跳过。
- *   3. **只读不写**。这里只比对版本号并把更新说明展示给用户，
- *      不会去下载或执行任何代码 —— 那等于让网络内容改这台机器上跑的程序。
+ *   3. **只读检查**。这里返回版本号、构建标识和包元数据；
+ *      真正下载与安装只会在用户主动点击更新后发生。
  */
 import fs from 'node:fs';
 import { CONFIG_FILE, isPublicMode } from './config.mjs';
@@ -17,6 +17,7 @@ import { CONFIG_FILE, isPublicMode } from './config.mjs';
 /** 检查间隔：默认 30 分钟。别设太小，GitHub 会对高频请求限流 */
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_UPDATE_URL = 'https://raw.githubusercontent.com/shihaoran105-alt/courseware-platform/main/version.json';
 
 /** @type {{at:number, url:string, data:object|null, error:string}} */
 let cache = { at: 0, url: '', data: null, error: '' };
@@ -38,7 +39,8 @@ export function updateCheckUrl() {
   const env = (process.env.UPDATE_CHECK_URL || '').trim();
   if (env) return env;
   const saved = readJson(CONFIG_FILE, {});
-  return typeof saved.updateCheckUrl === 'string' ? saved.updateCheckUrl.trim() : '';
+  if (typeof saved.updateCheckUrl === 'string') return saved.updateCheckUrl.trim();
+  return DEFAULT_UPDATE_URL;
 }
 
 export function setUpdateCheckUrl(url) {
@@ -68,6 +70,15 @@ function cleanVersion(v) {
   return /^\d+\.\d+\.\d+$/.test(s) ? s : '';
 }
 
+function cleanBuildId(v) {
+  return String(v || '').trim().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 100);
+}
+
+function cleanSha256(v) {
+  const value = String(v || '').trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(value) ? value : '';
+}
+
 /** 历史条目做一遍瘦身和截断，避免远端返回一个巨大文件把界面撑爆 */
 function cleanHistory(h) {
   if (!Array.isArray(h)) return [];
@@ -91,6 +102,9 @@ async function fetchRemote(url) {
   if (!version) throw new Error('远端 version.json 里没有合法的版本号');
   return {
     version,
+    buildId: cleanBuildId(data?.buildId),
+    packageUrl: isSafeUrl(data?.packageUrl) ? String(data.packageUrl) : '',
+    packageSha256: cleanSha256(data?.packageSha256),
     releasedAt: String(data?.releasedAt || '').slice(0, 40),
     history: cleanHistory(data?.history),
   };
@@ -146,6 +160,9 @@ export async function remoteStatus({ force = false } = {}) {
     editable,
     url,
     version: fresh.data?.version || '',
+    buildId: fresh.data?.buildId || '',
+    packageUrl: fresh.data?.packageUrl || '',
+    packageSha256: fresh.data?.packageSha256 || '',
     releasedAt: fresh.data?.releasedAt || '',
     history: fresh.data?.history || [],
     error: fresh.error || '',

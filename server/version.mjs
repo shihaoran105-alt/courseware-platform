@@ -17,6 +17,7 @@ export const VERSION_FILE = path.join(ROOT, 'version.json');
 
 const FALLBACK = {
   version: '0.0.0',
+  buildId: '',
   releasedAt: '',
   history: [],
 };
@@ -26,6 +27,7 @@ export function readVersion() {
     const raw = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf8'));
     return {
       version: String(raw.version || FALLBACK.version),
+      buildId: String(raw.buildId || ''),
       releasedAt: raw.releasedAt || '',
       history: Array.isArray(raw.history) ? raw.history : [],
     };

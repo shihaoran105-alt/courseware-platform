@@ -1,7 +1,20 @@
 {
-  "version": "1.4.1",
-  "releasedAt": "2026-09-19T04:28:06.419Z",
+  "version": "1.4.2",
+  "buildId": "2026-09-21-update-v2",
+  "packageUrl": "https://raw.githubusercontent.com/shihaoran105-alt/courseware-platform/main/courseware-platform-v1.4.2.zip",
+  "packageSha256": "71b25f93e113eb6326ebe0fc9b893223dfcfe57e7c0c9dd24c4620d32b20322b",
+  "releasedAt": "2026-09-21T06:30:00.000Z",
   "history": [
+    {
+      "version": "1.4.2",
+      "date": "2026-09-21",
+      "title": "重构在线更新：完整包与构建校验",
+      "changes": [
+        "更新按钮会真正下载 GitHub 完整包、校验 SHA-256，然后替换程序并重启",
+        "更新判断同时比较版本号和构建标识；即使版本号相同，代码包不一致也会强制修复",
+        "独立「检查更新」脚本改为真正安装更新，不再只比对版本号或打开下载页"
+      ]
+    },
     {
       "version": "1.4.1",
       "date": "2026-09-19",
