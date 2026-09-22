@@ -8,6 +8,8 @@
    这个文件只跑在 headless Chrome 里，不是给用户看的页面。 */
 import * as pdfjs from './pdf.min.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs';
+// 每页指标的算法和静态版共用同一个模块，别在这里另写一份
+import { statsFromOperatorList } from './page-select.mjs';
 
 window.__PDF_PAGES = 0;
 window.__PDF_ERR = '';
@@ -20,11 +22,28 @@ try {
   window.__PDF_ERR = 'pdf.js 打开失败：' + (e && e.message ? e.message : String(e));
 }
 
-/** 渲染 [from, to] 页，返回 [{page, dataUrl}] */
-window.__rasterRange = async (from, to, maxWidth, quality) => {
+/**
+ * 逐页统计「这页值不值得送给视觉模型」。
+ * 只返回数字，不做判断 —— 阈值放在 page-select.mjs，方便调。
+ */
+window.__pageStats = async () => {
   const out = [];
-  for (let p = from; p <= to; p++) {
-    if (p > doc.numPages) break;
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const vp = page.getViewport({ scale: 1 });
+    const opList = await page.getOperatorList();
+    const s = statsFromOperatorList(opList, pdfjs.OPS, vp.width * vp.height);
+    out.push({ page: p, ...s });
+    page.cleanup();
+  }
+  return JSON.stringify(out);
+};
+
+/** 渲染指定的若干页（页码可以不连续），返回 [{page, dataUrl}] */
+window.__rasterPages = async (pages, maxWidth, quality) => {
+  const out = [];
+  for (const p of pages) {
+    if (p > doc.numPages) continue;
     const page = await doc.getPage(p);
     const base = page.getViewport({ scale: 1 });
     // 按目标宽度算缩放，避免又大又糊

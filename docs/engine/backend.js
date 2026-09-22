@@ -27,6 +27,8 @@ import { allProjects, currentId, delProject, getProject, putProject, setCurrentI
 // 角色判定和服务器版共用同一份规则，避免两边行为不一致
 import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, roleLabel } from './roles.js';
 import { recommendStages, STAGE_CATALOG, normalizeStages } from './stages.js';
+// 「哪些页需要读图」的阈值和挑选规则与服务器版共用同一份
+import { selectPages, statsFromOperatorList, readModeOf, READ_MODE_LABEL } from './page-select.js';
 
 const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', lang: 'cw_lang', visionModel: 'cw_vision_model' };
 const lsGet = (k) => {
@@ -303,18 +305,76 @@ export async function upload(_projectId, files, onProgress) {
  * 纯静态版没有服务端，但浏览器里本来就有 pdf.js，所以直接在这里逐页渲染。
  * 用 JPEG 压到 1100px 宽，一页约 100-250KB —— 和服务器版发给模型的量级一致。
  */
-async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82, onProgress } = {}) {
+/** 只算每页的指标，不渲染 —— 给生成弹窗估算「自动模式会读几页」用 */
+async function projectPageStats(project) {
   const lib = window.pdfjsLib;
-  if (!lib) return [];
+  if (!lib) return { total: 0, auto: 0, files: [] };
+  const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
+  let total = 0;
+  let auto = 0;
+  const files = [];
+  for (const f of docs) {
+    try {
+      const doc = await lib.getDocument(f.previewPdf).promise;
+      const stats = [];
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n);
+        const vp = page.getViewport({ scale: 1 });
+        const ops = await page.getOperatorList();
+        stats.push({ page: n, ...statsFromOperatorList(ops, lib.OPS, vp.width * vp.height) });
+        page.cleanup();
+      }
+      const a = selectPages(stats, 'auto').length;
+      total += stats.length;
+      auto += a;
+      files.push({ file: f.originalName, pages: stats.length, auto: a });
+    } catch {
+      /* 单份文件失败不影响其他文件 */
+    }
+  }
+  return { total, auto, files };
+}
+
+/**
+ * 把课件页面渲染成截图。
+ *
+ * mode = auto（默认）时先算每页指标，只渲染「图片/表格/框图多」的页面；
+ * 纯文字页不渲染，也就不会把图片 token 花在它们身上。
+ * @returns {Promise<{images:Array, total:number, selected:number, mode:string}>}
+ */
+async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82, onProgress, mode = 'auto' } = {}) {
+  const lib = window.pdfjsLib;
+  if (!lib) return { images: [], total: 0, selected: 0, mode };
+  if (mode === 'text') return { images: [], total: 0, selected: 0, mode };
   const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
   const multi = docs.length > 1;
-  const out = [];
+  const images = [];
+  let total = 0;
+  let selected = 0;
 
   for (const f of docs) {
     try {
       const doc = await lib.getDocument(f.previewPdf).promise;
+
+      // 1) 先看每一页值不值得读图
+      const stats = [];
       for (let n = 1; n <= doc.numPages; n++) {
-        onProgress?.(`正在把课件页面转成图片 ${n}/${doc.numPages}`);
+        const page = await doc.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const ops = await page.getOperatorList();
+        stats.push({ page: n, ...statsFromOperatorList(ops, lib.OPS, base.width * base.height) });
+        page.cleanup();
+      }
+      total += stats.length;
+      const want = selectPages(stats, mode);
+      selected += want.length;
+
+      // 2) 只渲染挑中的页
+      for (let i = 0; i < want.length; i++) {
+        const n = want[i];
+        onProgress?.(
+          `正在把需要读图的页面渲染出来 ${i + 1}/${want.length}（共 ${stats.length} 页，挑了 ${want.length} 页）`,
+        );
         const page = await doc.getPage(n);
         const base = page.getViewport({ scale: 1 });
         const scale = Math.min(3, Math.max(0.4, maxWidth / base.width));
@@ -326,7 +386,7 @@ async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82,
         ctx.fillStyle = '#fff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
-        out.push({
+        images.push({
           file: f.originalName,
           page: n,
           label: multi ? `第 ${n} 页｜${f.originalName}` : `第 ${n} 页`,
@@ -340,7 +400,7 @@ async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82,
       onProgress?.(`「${f.originalName}」转图片失败，跳过：${err.message}`);
     }
   }
-  return out;
+  return { images, total, selected, mode };
 }
 
 /* ------------------------------ JSON 接口 ------------------------------ */
@@ -570,6 +630,13 @@ export async function api(path, options = {}) {
     return { ok: true, project: slim(project) };
   }
 
+  if ((m = p.match(/^\/api\/projects\/([^/]+)\/page-stats$/)) && method === 'GET') {
+    const project = await getProject(m[1]);
+    if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
+    const s = await projectPageStats(project);
+    return { ok: true, available: Boolean(window.pdfjsLib), total: s.total, auto: s.auto, all: s.total, files: s.files };
+  }
+
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/rerun$/))) {
     const project = await getProject(m[1]);
     if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
@@ -739,16 +806,29 @@ export async function postSSE(path, body, onEvent) {
     const files = contextFor(project);
     onEvent({ type: 'start', files: project.files.length, contextChars: files.context.length, model: cfg.model });
 
-    // 和服务器版一样：把页面渲染成截图一起发，图表和表格才读得到
+    // 和服务器版一样：把页面渲染成截图一起发，图表和表格才读得到。
+    // 默认 auto：只把「图片/表格/框图多」的页发给视觉模型，纯文字页只送文字。
     let pageImages = [];
-    if (body?.readPages !== false) {
+    const readMode = readModeOf(body);
+    if (readMode !== 'text') {
       try {
-        pageImages = await rasterizeProjectPages(project, {
+        const r = await rasterizeProjectPages(project, {
+          mode: readMode,
           onProgress: (message) => onEvent({ type: 'stage-detail', stage: 'analysis', message }),
         });
+        pageImages = r.images;
+        if (r.total) {
+          onEvent({
+            type: 'stage-detail',
+            stage: 'analysis',
+            message: `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图，其余按文字读`,
+          });
+        }
       } catch (err) {
         onEvent({ type: 'stage-detail', stage: 'analysis', level: 'warn', message: `页面截图没生成出来：${err.message}` });
       }
+    } else {
+      onEvent({ type: 'stage-detail', stage: 'analysis', message: '按你的选择：这次只用文字，不读页面截图' });
     }
 
     const result = await runFullAnalysis({

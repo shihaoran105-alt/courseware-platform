@@ -20,7 +20,8 @@ import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
 import { launchUpdateHelper, prepareUpdate } from './self-update.mjs';
 import { normalizeStages } from './stages.mjs';
-import { chromeState, rasterizePdf } from './render-pages.mjs';
+import { chromeState, rasterizePdf, pageStats, selectPages } from './render-pages.mjs';
+import { readModeOf, READ_MODE_LABEL } from './page-select.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -317,6 +318,40 @@ app.get('/api/projects/:id', (req, res) => {
   res.json(slim(req, project));
 });
 
+/**
+ * 「这份材料有多少页、自动模式大概会读几页」。
+ *
+ * 生成弹窗里给用户做选择用：页数多的时候要让人知道三种读法差多少钱。
+ * 只算统计不渲染，算过的结果会缓存在页面缓存目录里，第二次就是读文件。
+ */
+app.get('/api/projects/:id/page-stats', async (req, res) => {
+  const project = readableProjectOr404(req, res);
+  if (!project) return;
+  if (!chromeState().available) {
+    res.json({ ok: true, available: false, total: 0, auto: 0, all: 0, files: [], note: '没找到 Chrome，无法分析页面' });
+    return;
+  }
+  const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
+  let total = 0;
+  let auto = 0;
+  const files = [];
+  for (const f of docs) {
+    const disk = path.join(MEDIA_DIR, project.id, path.basename(f.previewPdf));
+    if (!fs.existsSync(disk)) continue;
+    try {
+      const stats = await pageStats({ pdfPath: disk, cacheKey: f.storedName || f.id });
+      const n = stats.length;
+      const a = selectPages(stats, 'auto').length;
+      total += n;
+      auto += a;
+      files.push({ file: f.originalName, name: f.originalName, pages: n, auto: a });
+    } catch {
+      /* 单份文件分析失败不影响其他文件 */
+    }
+  }
+  res.json({ ok: true, available: true, total, auto, all: total, files });
+});
+
 /** 改项目名 / 把项目移到另一个组（groupId 传空字符串 = 移出分组） */
 app.patch('/api/projects/:id', (req, res) => {
   const project = editableProjectOr404(req, res);
@@ -528,12 +563,13 @@ app.get('/api/projects/:id/files/:fileId/text', (req, res) => {
 
 /** 取这个项目的页面截图；渲染失败就返回空数组（退回纯文字，不阻断功能） */
 const pageCachePerRequest = new Map();
-async function pagesForProject(project) {
-  const key = project.id;
+async function pagesForProject(project, mode = 'auto') {
+  // 不同模式挑出来的页不一样，缓存要按模式分开存
+  const key = `${project.id}#${mode}`;
   if (pageCachePerRequest.has(key)) return pageCachePerRequest.get(key);
   let out = [];
   try {
-    if (chromeState().available) out = await collectPageImages({ project });
+    if (chromeState().available) out = (await collectPageImages({ project, mode })).images;
   } catch {
     /* 忽略，退回纯文字 */
   }
@@ -543,13 +579,22 @@ async function pagesForProject(project) {
   return out;
 }
 
+/** 读图模式（readModeOf / READ_MODE_LABEL）和前端、静态版共用 page-select.mjs */
+
 /**
- * 把项目里的文档类文件逐页渲染成截图。
+ * 把项目里的文档类文件渲染成截图。
  * PDF 用文件本身；PPTX / DOCX 等用上传时生成好的预览 PDF（LibreOffice 转过的那份）。
- * @returns {Promise<Array<{label:string, page:number, dataUrl:string, file:string}>>}
+ *
+ * mode = auto 时只渲染「位图覆盖面积大」或「矢量线段多」的页面 ——
+ * 纯文字页不渲染，也就不会把图片 token 花在它们身上。
+ *
+ * @returns {Promise<{images:Array<{label:string,page:number,dataUrl:string,file:string}>,
+ *                    total:number, selected:number, mode:string}>}
  */
-async function collectPageImages({ project, emit = () => {} }) {
-  const out = [];
+async function collectPageImages({ project, emit = () => {}, mode = 'auto' }) {
+  const images = [];
+  let total = 0;
+  let selected = 0;
   const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
   const multi = docs.length > 1;
 
@@ -558,9 +603,16 @@ async function collectPageImages({ project, emit = () => {} }) {
     const disk = path.join(MEDIA_DIR, project.id, path.basename(f.previewPdf));
     if (!fs.existsSync(disk)) continue;
     try {
-      const r = await rasterizePdf({ pdfPath: disk, cacheKey: f.storedName || f.id, onProgress: emit });
+      const r = await rasterizePdf({
+        pdfPath: disk,
+        cacheKey: f.storedName || f.id,
+        onProgress: emit,
+        mode,
+      });
+      total += r.total;
+      selected += r.selected;
       for (const p of r.pages) {
-        out.push({
+        images.push({
           file: f.originalName,
           page: p.page,
           // 位置标记要和 pageListFor 生成的标签一致，narration 才能按页对上
@@ -572,7 +624,7 @@ async function collectPageImages({ project, emit = () => {} }) {
       emit(`「${f.originalName}」转图片失败，跳过：${err.message}`);
     }
   }
-  return out;
+  return { images, total, selected, mode };
 }
 
 app.post('/api/projects/:id/analyze', async (req, res) => {
@@ -617,14 +669,27 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
      *
      * 文字层读不出来的东西 —— 电路图、框图、照片，以及被挤成一坨的表格 ——
      * 只能靠截图。渲染失败不影响流程，退化成原来的纯文本模式。
+     *
+     * 默认 auto：先看每页的位图覆盖面积和矢量绘制量，只把「图表页」发给视觉模型。
+     * 纯文字页只送文字，省掉那部分图片 token。
      */
     let pageImages = [];
-    if (req.body?.readPages !== false && chromeState().available) {
+    const readMode = readModeOf(req.body);
+    if (readMode !== 'text' && chromeState().available) {
       try {
-        pageImages = await collectPageImages({
+        const r = await collectPageImages({
           project,
+          mode: readMode,
           emit: (message) => stream.send({ type: 'stage-detail', stage: 'analysis', message }),
         });
+        pageImages = r.images;
+        if (r.total) {
+          stream.send({
+            type: 'stage-detail',
+            stage: 'analysis',
+            message: `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图，其余按文字读`,
+          });
+        }
       } catch (err) {
         stream.send({
           type: 'stage-detail',
@@ -633,6 +698,8 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
           message: `页面截图没生成出来，这次按纯文字读：${err.message}`,
         });
       }
+    } else if (readMode === 'text') {
+      stream.send({ type: 'stage-detail', stage: 'analysis', message: '按你的选择：这次只用文字，不读页面截图' });
     }
 
     // 生成语言：zh / en / bilingual（中英对照）
@@ -711,10 +778,12 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
     const files = contextFor(project, cfg.maxInputChars);
     project.analysis = project.analysis || {};
     // 单节重跑也要带页面截图 —— 用户点「重新生成本节」时最期待的就是图表能被读到
+    // 读图模式沿用这次请求的选择，默认还是 auto（只读图表页）
     let pageImages = [];
-    if (req.body?.readPages !== false && chromeState().available) {
+    const rerunReadMode = readModeOf(req.body);
+    if (rerunReadMode !== 'text' && chromeState().available) {
       try {
-        pageImages = await collectPageImages({ project });
+        pageImages = (await collectPageImages({ project, mode: rerunReadMode })).images;
       } catch {
         /* 渲染失败就退回纯文字，不阻断重跑 */
       }

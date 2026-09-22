@@ -1743,7 +1743,7 @@ async function rerunStageUI(stage, btn) {
   try {
     const res = await api(`/api/projects/${state.project.id}/rerun`, {
       method: 'POST',
-      body: JSON.stringify({ stage, readPages: state.readPages !== false }),
+      body: JSON.stringify({ stage, readPagesMode: readModeOfClient() }),
     });
     state.project.analysis = state.project.analysis || {};
     state.project.analysis[stage] = res.data;
@@ -1821,6 +1821,16 @@ function stageLabelOf(key) {
   return stageCatalog().find((s) => s.key === key)?.label || key;
 }
 
+/** 读图模式的显示名（口径和后端 page-select.mjs 的 READ_MODE_LABEL 一致） */
+function readModeLabelOf(key) {
+  return { auto: '自动', all: '全部读图', text: '纯文字' }[key] || key;
+}
+
+/** 用户选的读图模式；没选过就是 auto（只读图表页） */
+function readModeOfClient() {
+  return ['auto', 'all', 'text'].includes(state.readPagesMode) ? state.readPagesMode : 'auto';
+}
+
 /** 当前项目是用什么语言生成的：zh / en / bilingual */
 function langModeOf() {
   const a = state.project?.analysis;
@@ -1884,17 +1894,35 @@ function openAnalyzeModal() {
         .join('')}
     </div>`;
 
-  // 读页面截图：默认开。关掉就退回纯文字模式（便宜、但读不到图表）
-  const readPages = state.readPages !== false;
-  const pagesPicker = `<div class="pick-head"><span>怎么读这份课件</span></div>
-    <label class="stage-opt ${readPages ? 'on' : ''}">
-      <input type="checkbox" id="readPagesChk" ${readPages ? 'checked' : ''}>
-      <span class="stage-opt-body">
-        <b>连页面截图一起读（推荐）</b>
-        <i>把每一页渲染成图片发给视觉模型，图表、框图、公式和表格结构都能读到。
-           代价是每页约 400–1300 tokens，并且这一步固定用 ${esc(state.config?.visionModel || 'deepseek-flash')} 读图。</i>
-      </span>
-    </label>`;
+  // 读页面截图。默认 auto：先看每页的图片覆盖面积和矢量绘制量，
+  // 只把「图片 / 表格 / 框图多」的页面做成截图发给视觉模型，纯文字页只送文字。
+  const readMode = readModeOfClient();
+  const docPages = arr(state.project?.files).reduce((n, f) => n + (Number(f?.meta?.pages) || 0), 0);
+  // 页数一多，「全部读图」的代价就很可观了，这时候才把选择摆到用户面前
+  const bigDoc = docPages >= 30;
+  const readModeHint = {
+    auto: '只把图片、表格、框图多的页面做成截图发给视觉模型；纯文字页只读文字。页数多的时候这是最划算的。',
+    all: '每一页都渲染成截图发给视觉模型，图表和排版一定读得到，但页数多时 token 明显更贵。',
+    text: '一页都不读图，只把提取出来的文字发给模型，最省；代价是图表、框图，以及被挤成一团的表格会读不到。',
+  };
+  const pagesPicker = `<div class="pick-head">
+      <span>怎么读这份课件</span>
+      ${bigDoc ? `<span class="pick-badge">${docPages} 页，建议用自动</span>` : ''}
+    </div>
+    <div id="readCostNote" class="read-cost"></div>
+    <div class="read-modes">
+      ${['auto', 'all', 'text']
+        .map(
+          (k) => `<label class="read-opt ${k === readMode ? 'on' : ''} ${k === 'auto' ? 'recommended' : ''}">
+        <input type="radio" name="readMode" value="${k}" ${k === readMode ? 'checked' : ''}>
+        <span class="read-opt-body">
+          <b>${esc(readModeLabelOf(k))}${k === 'auto' ? '<span class="pick-tag">推荐</span>' : ''}</b>
+          <i>${esc(readModeHint[k])}</i>
+        </span>
+      </label>`,
+        )
+        .join('')}
+    </div>`;
 
   const rows = stageCatalog()
     .map((s) => {
@@ -1987,10 +2015,50 @@ function openAnalyzeModal() {
     if (!keys.length) return;
     const pick = $$('#modalRoot [name="genLang"]').find((r) => r.checked);
     const mode = pick?.value || 'zh';
-    state.readPages = $('#readPagesChk')?.checked !== false;
+    state.readPagesMode = $$('#modalRoot [name="readMode"]').find((r) => r.checked)?.value || 'auto';
     closeModal();
     runAnalysis(keys, mode);
   });
+  // 选读图方式时把高亮跟着挪过去
+  $$('#modalRoot [name="readMode"]').forEach((r) =>
+    r.addEventListener('change', () => {
+      $$('#modalRoot .read-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input')?.checked));
+    }),
+  );
+
+  // 页数多的时候，先把「自动模式会读几页」算出来摆给用户看，再让他决定。
+  // 算不出来（没装 Chrome、静态版没这接口）就退回一句说明，不影响生成。
+  (async () => {
+    const plain = () =>
+      `<span class="muted">共 ${docPages} 页。自动模式会先判断每一页的图片 / 表格情况，只把该读图的页发出去。</span>`;
+    let box = $('#readCostNote');
+    if (!box) return;
+    if (!bigDoc) {
+      box.innerHTML = plain();
+      return;
+    }
+    box.innerHTML = '<span class="muted">正在统计每一页的图片 / 表格情况…</span>';
+    try {
+      const s = await api(`/api/projects/${state.project.id}/page-stats`);
+      box = $('#readCostNote');
+      if (!box) return;
+      if (!s?.available || !s.total) {
+        box.innerHTML = plain();
+        return;
+      }
+      const rest = Math.max(0, s.total - s.auto);
+      const k = (n) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+      box.innerHTML =
+        `${icon('alert', 12)} 这份材料共 <b>${s.total}</b> 页。自动模式预计只读 <b>${s.auto}</b> 页的图，` +
+        `其余 <b>${rest}</b> 页按文字读。` +
+        (rest
+          ? `选「全部读图」会多读这 ${rest} 页，大约多花 ${k(rest * 400)}–${k(rest * 1300)} tokens。`
+          : '这份材料几乎每页都有图或表格，三种读法差别不大。');
+    } catch {
+      box = $('#readCostNote');
+      if (box) box.innerHTML = plain();
+    }
+  })();
   $$('#modalRoot [name="genLang"]').forEach((r) =>
     r.addEventListener('change', () => {
       // 对照模式会让生成时间和额度翻倍，勾选后按钮上直接说明
@@ -3036,7 +3104,7 @@ async function runAnalysis(stages, langMode = 'zh') {
   try {
     await postSSE(
       `/api/projects/${state.project.id}/analyze`,
-      { name: state.project.name, stages: want, langMode, readPages: state.readPages !== false },
+      { name: state.project.name, stages: want, langMode, readPagesMode: readModeOfClient() },
       (evt) => {
       if (evt.type === 'start') {
         state.stages.forEach((s) => {

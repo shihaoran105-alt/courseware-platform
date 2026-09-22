@@ -60,7 +60,9 @@ compileModule(path.join(ROOT, 'server/roles.mjs'), path.join(OUT, 'engine/roles.
 compileModule(path.join(ROOT, 'server/stages.mjs'), path.join(OUT, 'engine/stages.js'), [
   ["from './roles.mjs'", "from './roles.js'"],
 ]);
-log('引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js / stages.js');
+// 「哪些页需要读图」的阈值和挑选规则：服务器版和静态版共用同一份，避免两边各调各的
+compileModule(path.join(ROOT, 'server/page-select.mjs'), path.join(OUT, 'engine/page-select.js'));
+log('引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js / stages.js / page-select.js');
 
 // ---------- 3. 静态版专属引擎 ----------
 for (const f of ['extract.js', 'store.js', 'backend.js']) {

@@ -1720,3 +1720,33 @@ ul.clean li::marker { color: var(--ink-4); }
 /* 弹窗里的「连页面截图一起读」开关，勾上时高亮 */
 .stage-opt.on { border-color: var(--brand); background: var(--brand-soft); }
 .stage-opt-body i { display: block; }
+
+/* 生成弹窗里的读图方式三选一 */
+.pick-badge {
+  margin-left: auto; font-size: 11px; font-weight: 650; letter-spacing: 0;
+  text-transform: none; color: var(--brand-ink);
+  background: var(--brand-soft); border: 1px solid var(--brand-line);
+  border-radius: 999px; padding: 2px 9px;
+}
+.read-modes { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+.read-opt {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  padding: 9px 12px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.read-opt:hover { border-color: var(--brand-line); background: var(--surface); }
+.read-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.read-opt input { margin-top: 3px; flex-shrink: 0; }
+.read-opt-body { display: flex; flex-direction: column; gap: 2px; }
+.read-opt-body b { font-size: 13px; font-weight: 620; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.read-opt-body i { font-size: 12px; font-style: normal; color: var(--ink-4); line-height: 1.6; }
+.pick-tag {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  color: var(--brand-ink); background: var(--brand-soft);
+  border: 1px solid var(--brand-line); border-radius: 4px; padding: 1px 5px;
+}
+/* 页数多的时候摆出来的代价说明 */
+.read-cost { font-size: 12px; line-height: 1.7; color: var(--ink-3); margin: 0 0 10px; }
+.read-cost:empty { display: none; }
+.read-cost b { color: var(--ink); font-weight: 650; }
+.read-cost svg { vertical-align: -1px; color: var(--warn); }

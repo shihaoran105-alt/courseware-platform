@@ -72,6 +72,14 @@ const JPEG_QUALITY = Number(process.env.PAGE_IMAGE_QUALITY) || 0.82;
 /** 一次取回多少页（CDP 一次传太多 base64 会很慢） */
 const BATCH = 6;
 
+/**
+ * 「这页要不要读图」的阈值和挑选规则都在 page-select.mjs，服务端和静态版共用一份。
+ * 这里既 import（自己要用 selectPages）又 re-export（对外保持原有导出名）。
+ */
+import { selectPages, pageNeedsImage, IMG_RATIO_MIN, PATH_SEGS_MIN } from './page-select.mjs';
+
+export { selectPages, pageNeedsImage, IMG_RATIO_MIN, PATH_SEGS_MIN };
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -101,6 +109,8 @@ function startAssetServer(pdfPath) {
       else if (rel === '/pdf.min.mjs') file = path.join(PUBLIC_DIR, 'vendor', 'pdf.min.mjs');
       else if (rel === '/pdf.worker.min.mjs') file = path.join(PUBLIC_DIR, 'vendor', 'pdf.worker.min.mjs');
       else if (rel === '/r.html') file = path.join(ROOT, 'server', 'raster.html');
+      // 每页指标的算法和静态版共用同一份，这里把它一起喂给页面
+      else if (rel === '/page-select.mjs') file = path.join(ROOT, 'server', 'page-select.mjs');
       if (!file || !fs.existsSync(file)) {
         res.writeHead(404).end();
         return;
@@ -164,36 +174,40 @@ async function connectCdp(port, { timeoutMs = 20000 } = {}) {
   return { ws, send, evaluate, close: () => ws.close() };
 }
 
-/**
- * 把 PDF 渲染成一张张 JPEG。
- *
- * @param {object} opts
- * @param {string} opts.pdfPath  预览 PDF 的磁盘路径
- * @param {string} opts.cacheKey 缓存目录名（一般用文件的 storedName）
- * @param {AbortSignal} [opts.signal]
- * @returns {Promise<{pages: Array<{page:number, dataUrl:string, bytes:number, file:string}>}>}
- */
-export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress }) {
-  const bin = findChrome();
-  if (!bin) throw new Error('没找到 Chrome，无法把课件页面渲染成图片');
-  if (!fs.existsSync(pdfPath)) throw new Error('预览 PDF 不存在：' + pdfPath);
-
-  const dir = path.join(PAGE_CACHE_DIR, String(cacheKey || path.basename(pdfPath)).replace(/[^\w.-]/g, '_'));
-  fs.mkdirSync(dir, { recursive: true });
-
-  // 缓存命中：已经有渲染好的页就直接用
-  const cached = fs
+/** 缓存目录里已经渲染好的页 -> [{page, file}] */
+function renderedPages(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
     .readdirSync(dir)
     .filter((f) => /^p\d+\.jpg$/.test(f))
     .map((f) => ({ page: Number(f.match(/^p(\d+)\.jpg$/)[1]), file: path.join(dir, f) }))
     .sort((a, b) => a.page - b.page);
-  if (cached.length) {
-    return { pages: cached.map(lazyPage), fromCache: true };
-  }
+}
 
+/** 每页的统计结果缓存在缓存目录里，算一次就够了 */
+function readStats(dir) {
+  try {
+    const d = JSON.parse(fs.readFileSync(path.join(dir, 'stats.json'), 'utf8'));
+    return Array.isArray(d) && d.length ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 某个文件的页面缓存目录 */
+function pageDir(cacheKey, pdfPath) {
+  return path.join(PAGE_CACHE_DIR, String(cacheKey || path.basename(pdfPath)).replace(/[^\w.-]/g, '_'));
+}
+
+/**
+ * 开一个一次性的 headless Chrome，把这份 PDF 载进 pdf.js，再把控制权交给 fn。
+ * 页面渲染和页面统计都需要这一步，所以抽出来共用。
+ */
+async function withPdfInChrome({ bin, pdfPath, signal }, fn) {
+  if (signal?.aborted) throw Object.assign(new Error('已取消'), { name: 'AbortError' });
   const { srv, port } = await startAssetServer(pdfPath);
   const debugPort = await freePort();
-  const profile = path.join(CACHE_DIR, `chrome-raster-${process.pid}`);
+  const profile = path.join(CACHE_DIR, `chrome-raster-${process.pid}-${debugPort}`);
   const chrome = spawn(
     bin,
     [
@@ -227,26 +241,7 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress }) {
       const err = await cdp.evaluate('window.__PDF_ERR || ""');
       throw new Error(err || 'pdf.js 没能读取这份 PDF');
     }
-
-    const pages = [];
-    for (let start = 1; start <= total; start += BATCH) {
-      if (signal?.aborted) throw Object.assign(new Error('已取消'), { name: 'AbortError' });
-      const end = Math.min(start + BATCH - 1, total);
-      onProgress?.(`正在把课件页面转成图片 ${start}-${end}/${total}`);
-      const out = await cdp.evaluate(
-        `window.__rasterRange(${start}, ${end}, ${MAX_WIDTH}, ${JPEG_QUALITY})`,
-      );
-      const list = typeof out === 'string' ? JSON.parse(out) : out;
-      for (const item of list || []) {
-        if (!item?.dataUrl) continue;
-        const b64 = String(item.dataUrl).split(',')[1] || '';
-        const file = path.join(dir, `p${item.page}.jpg`);
-        fs.writeFileSync(file, Buffer.from(b64, 'base64'));
-        pages.push(lazyPage({ page: item.page, file }));
-      }
-    }
-    pages.sort((a, b) => a.page - b.page);
-    return { pages, fromCache: false };
+    return await fn({ cdp, total });
   } finally {
     try {
       cdp?.close();
@@ -267,6 +262,132 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress }) {
       /* 忽略 */
     }
   }
+}
+
+/** 把 __pageStats 的返回值解析成数组 */
+function parseStats(raw) {
+  const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return Array.isArray(list) ? list.filter((x) => Number(x?.page) > 0) : [];
+}
+
+/**
+ * 只算每页的统计（不渲染），结果落盘缓存。
+ * 给「生成前先告诉用户自动模式会读几页」用。
+ * @returns {Promise<Array<{page:number,imgRatio:number,pathSegs:number}>>}
+ */
+export async function pageStats({ pdfPath, cacheKey, signal } = {}) {
+  const bin = findChrome();
+  if (!bin) throw new Error('没找到 Chrome，无法分析课件页面');
+  if (!fs.existsSync(pdfPath)) throw new Error('预览 PDF 不存在：' + pdfPath);
+  const dir = pageDir(cacheKey, pdfPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const cached = readStats(dir);
+  if (cached) return cached;
+
+  const stats = await withPdfInChrome({ bin, pdfPath, signal }, ({ cdp }) =>
+    cdp.evaluate('window.__pageStats()').then(parseStats),
+  );
+  if (stats.length) {
+    try {
+      fs.writeFileSync(path.join(dir, 'stats.json'), JSON.stringify(stats));
+    } catch {
+      /* 缓存写失败不影响这次使用 */
+    }
+  }
+  return stats;
+}
+
+/**
+ * 把 PDF 渲染成一张张 JPEG。
+ *
+ * auto 模式下先算每页统计，只渲染「图片/表格/框图多」的那些页 ——
+ * 纯文字页只把提取出来的文字交给模型，省掉那些页的图片 token。
+ *
+ * @param {object} opts
+ * @param {string} opts.pdfPath  预览 PDF 的磁盘路径
+ * @param {string} opts.cacheKey 缓存目录名（一般用文件的 storedName）
+ * @param {AbortSignal} [opts.signal]
+ * @param {'auto'|'all'|'text'} [opts.mode] 读图模式，默认 auto
+ * @returns {Promise<{pages: Array, total:number, selected:number, mode:string, fromCache:boolean}>}
+ */
+export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode = 'auto' }) {
+  const bin = findChrome();
+  if (!bin) throw new Error('没找到 Chrome，无法把课件页面渲染成图片');
+  if (!fs.existsSync(pdfPath)) throw new Error('预览 PDF 不存在：' + pdfPath);
+
+  const dir = pageDir(cacheKey, pdfPath);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // 只读文字：一页都不用渲染
+  if (mode === 'text') return { pages: [], total: 0, selected: 0, mode, fromCache: true };
+
+  let stats = readStats(dir);
+
+  // 缓存够用就别开 Chrome：统计有了，而且该挑的页都已渲染过
+  if (stats) {
+    const want = selectPages(stats, mode);
+    const have = new Map(renderedPages(dir).map((p) => [p.page, p]));
+    if (want.every((n) => have.has(n))) {
+      return {
+        pages: want.map((n) => lazyPage(have.get(n))),
+        total: stats.length,
+        selected: want.length,
+        mode,
+        fromCache: true,
+      };
+    }
+  }
+
+  const fresh = await withPdfInChrome({ bin, pdfPath, signal }, async ({ cdp, total }) => {
+    // 1) 先要统计 —— auto 模式靠它决定挑哪些页
+    if (!stats) {
+      onProgress?.('正在分析课件页面（判断哪些页需要读图）…');
+      stats = parseStats(await cdp.evaluate('window.__pageStats()'));
+    }
+    // 统计拿不到（老版本 pdf.js、异常 PDF）时退回全渲染，
+    // 宁可多花 token，也不能让图悄悄消失
+    const useMode = stats.length ? mode : 'all';
+    const want = selectPages(stats, useMode);
+    const have = new Set(renderedPages(dir).map((p) => p.page));
+    const todo = want.filter((n) => !have.has(n));
+
+    // 2) 只渲染缺的那几页
+    for (let i = 0; i < todo.length; i += BATCH) {
+      if (signal?.aborted) throw Object.assign(new Error('已取消'), { name: 'AbortError' });
+      const chunk = todo.slice(i, i + BATCH);
+      onProgress?.(
+        `正在把需要读图的页面渲染出来 ${Math.min(i + BATCH, todo.length)}/${todo.length}（共 ${total} 页，挑了 ${want.length} 页）`,
+      );
+      const list = JSON.parse(
+        await cdp.evaluate(
+          `window.__rasterPages(${JSON.stringify(chunk)}, ${MAX_WIDTH}, ${JPEG_QUALITY})`,
+        ),
+      );
+      for (const item of list || []) {
+        if (!item?.dataUrl) continue;
+        const b64 = String(item.dataUrl).split(',')[1] || '';
+        fs.writeFileSync(path.join(dir, `p${item.page}.jpg`), Buffer.from(b64, 'base64'));
+      }
+    }
+    return { useMode, want };
+  });
+
+  if (stats?.length) {
+    try {
+      fs.writeFileSync(path.join(dir, 'stats.json'), JSON.stringify(stats));
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  const byPage = new Map(renderedPages(dir).map((p) => [p.page, p]));
+  return {
+    pages: fresh.want.map((n) => byPage.get(n)).filter(Boolean).map(lazyPage),
+    total: stats?.length || 0,
+    selected: fresh.want.length,
+    mode: fresh.useMode,
+    fromCache: false,
+  };
 }
 
 /** 渲染好的页面缓存清掉（重新上传同一份文件时用） */
