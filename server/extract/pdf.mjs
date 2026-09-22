@@ -60,14 +60,24 @@ export async function extractPdf(buf, { name }) {
   }
 
   const imageOnly = blocks.filter((b) => b.text.length < 8).length;
+  const totalChars = blocks.reduce((n, b) => n + b.text.length, 0);
+  // 有没有文字层，决定后面走哪条路：
+  //   文字型 → 直接抽文字就够了，根本不用转图片，更不用 OCR（95 页实测 0.08 秒）
+  //   扫描型 → 抽不出字，得先把图上的字认出来（见 server/ocr.mjs）
+  const scanned = imageOnly > pageCount / 2;
   return {
     kind: 'pdf',
     name,
     blocks,
     meta: {
       pages: pageCount,
+      textChars: totalChars,
+      textPages: pageCount - imageOnly,
       emptyPages: imageOnly,
-      note: imageOnly > pageCount / 2 ? '多数页面没有可提取文字，可能是扫描版 PDF（本平台暂不做 OCR）' : '',
+      scanned,
+      note: scanned
+        ? '这份 PDF 没有可提取的文字层（扫描件/拍照件）。生成时会先用视觉模型把每页文字批量识别出来，只做一次并缓存'
+        : '',
     },
   };
 }

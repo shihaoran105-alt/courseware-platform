@@ -7,6 +7,7 @@ import multer from 'multer';
 import {
   DATA_DIR,
   NeedKeyError,
+  CACHE_DIR,
   PUBLIC_DIR,
   UPLOAD_DIR,
   isPublicMode,
@@ -22,6 +23,7 @@ import { launchUpdateHelper, prepareUpdate } from './self-update.mjs';
 import { normalizeStages } from './stages.mjs';
 import { chromeState, rasterizePdf, pageStats, selectPages } from './render-pages.mjs';
 import { readModeOf, READ_MODE_LABEL } from './page-select.mjs';
+import { isScannedDoc, isBlankPageText, ocrPages, applyOcrToBlocks } from './ocr.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -335,6 +337,16 @@ app.get('/api/projects/:id/page-stats', async (req, res) => {
   let total = 0;
   let auto = 0;
   const files = [];
+  // 扫描件（没有文字层）会先被批量识别成文字，这一步只做一次并缓存 ——
+  // 弹窗里要如实告诉用户，别让他以为只是「读几页图」
+  const scanned = (project.files || [])
+    .filter((f) => isScannedDoc(f))
+    .map((f) => ({
+      id: f.id,
+      name: f.originalName,
+      pages: Number(f.meta?.pages) || 0,
+      ocrDone: Number(f.meta?.ocrPages) > 0,
+    }));
   for (const f of docs) {
     const disk = path.join(MEDIA_DIR, project.id, path.basename(f.previewPdf));
     if (!fs.existsSync(disk)) continue;
@@ -349,7 +361,16 @@ app.get('/api/projects/:id/page-stats', async (req, res) => {
       /* 单份文件分析失败不影响其他文件 */
     }
   }
-  res.json({ ok: true, available: true, total, auto, all: total, maxImages: MAX_IMAGES_PER_REQUEST, files });
+  res.json({
+    ok: true,
+    available: true,
+    total,
+    auto,
+    all: total,
+    maxImages: MAX_IMAGES_PER_REQUEST,
+    scanned,
+    files,
+  });
 });
 
 /** 改项目名 / 把项目移到另一个组（groupId 传空字符串 = 移出分组） */
@@ -613,6 +634,7 @@ async function collectPageImages({ project, emit = () => {}, mode = 'auto' }) {
       selected += r.selected;
       for (const p of r.pages) {
         images.push({
+          fileId: f.id,
           file: f.originalName,
           page: p.page,
           // 位置标记要和 pageListFor 生成的标签一致，narration 才能按页对上
@@ -625,6 +647,95 @@ async function collectPageImages({ project, emit = () => {}, mode = 'auto' }) {
     }
   }
   return { images, total, selected, mode };
+}
+
+/**
+ * 扫描件的识字结果落盘缓存。纯逻辑在 ocr.mjs（服务端和静态版共用），
+ * 这里只提供「往哪写」—— 静态版对应的是 localStorage。
+ */
+const OCR_CACHE_DIR = path.join(CACHE_DIR, 'ocr');
+fs.mkdirSync(OCR_CACHE_DIR, { recursive: true });
+function ocrCacheFor(key) {
+  const file = path.join(OCR_CACHE_DIR, `${String(key || '').replace(/[^\w.-]/g, '_')}.json`);
+  return {
+    async read() {
+      try {
+        const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return d && typeof d.pages === 'object' ? d.pages : null;
+      } catch {
+        return null;
+      }
+    },
+    async write(pages) {
+      try {
+        fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), pages }));
+      } catch {
+        /* 缓存写失败不影响这次使用 */
+      }
+    },
+  };
+}
+
+/**
+ * 扫描版 PDF：生成之前先把整份认成文字。
+ *
+ * 文字型 PDF 不走这里 —— 它们本来就有文字层，pdfjs 直接读，95 页实测 0.08 秒。
+ * 只有抽不出文字的扫描件/拍照件才需要，而且**只做一次**、结果落盘缓存，
+ * 之后所有阶段（分析/事例/规划/总结/题/Lab）都读文字，不再反复发同一批图片。
+ *
+ * @returns {Promise<Array<{id:string, name:string, pages:number}>>} 这次真正识别过的文件
+ */
+async function ocrScannedFiles({ project, cfg, stream, signal }) {
+  const done = [];
+  for (const f of project.files || []) {
+    if (f.kind !== 'pdf' || !f.previewPdf || !isScannedDoc(f)) continue;
+    // 已经是文字了（识别过、或本来部分页有文字层）就不重复做
+    const blank = (f.blocks || []).filter((b) => isBlankPageText(b.text));
+    if (!blank.length) continue;
+
+    const disk = path.join(MEDIA_DIR, project.id, path.basename(f.previewPdf));
+    if (!fs.existsSync(disk)) continue;
+    const say = (message) => stream.send({ type: 'stage-detail', stage: 'analysis', message });
+
+    try {
+      // 要认整份，所以这里是 all 而不是 auto —— auto 会按「图片多不多」挑页，
+      // 而扫描件每页都是图，挑出来也是全部
+      const r = await rasterizePdf({
+        pdfPath: disk,
+        cacheKey: f.storedName || f.id,
+        mode: 'all',
+        onProgress: say,
+        signal,
+      });
+      const ocr = await ocrPages({
+        pages: r.pages.map((p) => ({ page: p.page, dataUrl: p.dataUrl })),
+        cfg,
+        emit: say,
+        signal,
+        cache: ocrCacheFor(f.storedName || f.id),
+      });
+      const { blocks, hit } = applyOcrToBlocks(f.blocks, ocr.pages);
+      f.blocks = blocks;
+      // 关键：contextFor / buildContext 读的是存在文件上的 text，
+      // 只改 blocks 的话识别结果永远送不到模型那儿
+      f.text = fileToText({ ...f, blocks });
+      f.chars = f.text.length;
+      f.meta = {
+        ...(f.meta || {}),
+        scanned: true,
+        ocrPages: hit,
+        ocrAt: new Date().toISOString(),
+      };
+      if (hit) {
+        say(`「${f.originalName}」识别完成：${hit} 页文字已并入原文，之后各模式都读文字即可`);
+        done.push({ id: f.id, name: f.originalName, pages: hit });
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      say(`「${f.originalName}」文字识别失败，这份仍按图片读：${err.message}`);
+    }
+  }
+  return done;
 }
 
 app.post('/api/projects/:id/analyze', async (req, res) => {
@@ -649,6 +760,18 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
   });
 
   try {
+    // 扫描件先认字（只做一次，缓存）—— 必须在 contextFor 之前，
+    // 否则这次生成拿到的还是空文字
+    const ocrDone = req.body?.ocrScanned === false
+      ? []
+      : await ocrScannedFiles({ project, cfg, stream, signal: controller.signal });
+    if (ocrDone.length) persist(project);
+    // 注意要按「这份文件已经有识别出来的文字」来判断，不能只看这次有没有跑 OCR ——
+    // 第二次生成时 OCR 命中的是缓存，ocrDone 是空的，但图同样不该再发一遍。
+    const ocrIds = new Set(
+      (project.files || []).filter((f) => Number(f.meta?.ocrPages) > 0).map((f) => f.id),
+    );
+
     const files = contextFor(project, cfg.maxInputChars);
     const hasVideo = project.files.some((f) => f.role === 'video');
     const hasText = project.files.some((f) => classify(f.originalName) === 'document' && f.chars > 0);
@@ -682,12 +805,18 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
           mode: readMode,
           emit: (message) => stream.send({ type: 'stage-detail', stage: 'analysis', message }),
         });
-        pageImages = r.images;
+        // 刚识别过文字的扫描件不再发图 —— 内容已经在文字里了。
+        // 这正是「批量 OCR 而不是逐页截图」省下来的大头：原来 6 个阶段各发一遍图片。
+        pageImages = ocrIds.size ? r.images.filter((p) => !ocrIds.has(p.fileId)) : r.images;
         if (r.total) {
+          const skipped = r.images.length - pageImages.length;
           stream.send({
             type: 'stage-detail',
             stage: 'analysis',
-            message: `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图，其余按文字读`,
+            message:
+              `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图` +
+              (skipped ? `，其中 ${skipped} 页已识别成文字、不再重复发图` : '') +
+              '，其余按文字读',
           });
         }
       } catch (err) {

@@ -62,7 +62,13 @@ compileModule(path.join(ROOT, 'server/stages.mjs'), path.join(OUT, 'engine/stage
 ]);
 // 「哪些页需要读图」的阈值和挑选规则：服务器版和静态版共用同一份，避免两边各调各的
 compileModule(path.join(ROOT, 'server/page-select.mjs'), path.join(OUT, 'engine/page-select.js'));
-log('引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js / stages.js / page-select.js');
+// 扫描件的批量识字：同样两边共用（缓存适配器由各自注入）
+compileModule(path.join(ROOT, 'server/ocr.mjs'), path.join(OUT, 'engine/ocr.js'), [
+  ["from './ai/client.mjs'", "from './ai.js'"],
+]);
+log(
+  '引擎  prompts.js / ai.js / pipeline.js / export.js / providers.js / roles.js / stages.js / page-select.js / ocr.js',
+);
 
 // ---------- 3. 静态版专属引擎 ----------
 for (const f of ['extract.js', 'store.js', 'backend.js']) {

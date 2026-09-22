@@ -1,10 +1,26 @@
 {
-  "version": "1.5.1",
-  "buildId": "2026-09-22-fix-413-image-budget",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.5.1/courseware-platform-v1.5.1.zip",
-  "packageSha256": "66f0793cb37a8f9b82a8046dcd414755c51df53c10b89c0f1d09c721c1f798e8",
-  "releasedAt": "2026-09-22T02:35:02.353Z",
+  "version": "1.6.0",
+  "buildId": "2026-09-22-batch-ocr-scanned",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.6.0/courseware-platform-v1.6.0.zip",
+  "packageSha256": "38c41b8bf15b85bc4cfc2f2c1cda04e85b89a16781be1cf7ff6a86b0f6ea4c6a",
+  "releasedAt": "2026-09-22T02:45:11.904Z",
   "history": [
+    {
+      "version": "1.6.0",
+      "date": "2026-09-22",
+      "title": "扫描版 PDF 改走批量识字：一次认完整份，之后都读文字",
+      "changes": [
+        "先澄清一个事实（都实测过）：文字型 PDF 的处理**本来就不慢**，也**没有 OCR**。pdfjs 直接读文字层，95 页 0.08 秒、76 页 0.06 秒。之前看到的「慢」不是解析造成的，是「逐页转图片」那一步 —— 95 页全转 2.9 秒，同一份按图表页挑着转只要 1.6 秒",
+        "真正的短板是扫描件：它们抽不出任何文字，以前只能把页面图发给视觉模型，而且是**每个阶段各发一遍**（分析/事例/规划/总结/题/Lab 共 6 遍）。一本 224 页的扫描教材就是这么卡住并 413 的",
+        "新增 server/ocr.mjs：探测到没有文字层（pdfjs 的 getTextContent 全是空的）才走它。把整份扫描件按每批 6 页**一次性认成文字**，结果落盘缓存；之后所有阶段都读文字，不再重复发图片。中途失败可以续跑，已认过的页不会重来",
+        "为什么不用 PaddleOCR / MinerU：它们要 Python 运行时加几百 MB 模型，而这个平台是「装个 Node、双击安装器」发到学生机器上的，加不动这层依赖。视觉模型本来就已经配好，批量跑一次同样能做到「整份一次跑完」",
+        "识字提示词还要求顺带描述图表（[图] 一句话说明），所以 OCR 之后的文字里已经带上了图的信息，后续阶段不再需要重复看图",
+        "实测（6 页真扫描件，用 headless Chrome 把课件渲染成纯图片再印成 PDF，确认 textChars=0）：第一次生成发 1 次识字请求（6 张图）+ 1 次分析请求（**0 张图**，1085 字上下文）；第二次生成 OCR 命中缓存，**只发 1 次分析请求，0 张图**。同样这份材料在改动前是 6 张图 × 6 个阶段 = 36 张",
+        "文字型 PDF 完全不受影响：实测走同样的流程，一次 OCR 请求都没有发出去",
+        "弹窗里如实说明：检测到扫描件会告诉你文件名和页数，说明会先批量识字、只做一次并缓存；已经识别过的直接复用缓存",
+        "静态版（GitHub Pages）同步：ocr.mjs 做成不碰 Node 内置模块，缓存在服务端落盘、在静态版落 localStorage，两边共用同一套逻辑和提示词"
+      ]
+    },
     {
       "version": "1.5.1",
       "date": "2026-09-22",

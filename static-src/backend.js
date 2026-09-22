@@ -29,6 +29,8 @@ import { classifyRole, isValidRole, matchSolution, projectShape, ROLE_CATALOG, r
 import { recommendStages, STAGE_CATALOG, normalizeStages } from './stages.js';
 // 「哪些页需要读图」的阈值和挑选规则与服务器版共用同一份
 import { selectPages, statsFromOperatorList, readModeOf, READ_MODE_LABEL } from './page-select.js';
+// 扫描件的批量识字，同样和服务器版共用；缓存换成 localStorage
+import { isScannedDoc, isBlankPageText, applyOcrToBlocks, ocrPages } from './ocr.js';
 
 const LS = { key: 'cw_api_key', base: 'cw_api_base', model: 'cw_api_model', lang: 'cw_lang', visionModel: 'cw_vision_model' };
 const lsGet = (k) => {
@@ -305,10 +307,76 @@ export async function upload(_projectId, files, onProgress) {
  * 纯静态版没有服务端，但浏览器里本来就有 pdf.js，所以直接在这里逐页渲染。
  * 用 JPEG 压到 1100px 宽，一页约 100-250KB —— 和服务器版发给模型的量级一致。
  */
+/**
+ * 扫描版 PDF：生成之前先把整份认成文字（静态版）。
+ * 服务端落盘缓存，这里用 localStorage —— 逻辑本身在 ocr.js 里，两边共用。
+ */
+function ocrCacheFor(key) {
+  const lsKey = `cw_ocr_${String(key || '').replace(/[^\w.-]/g, '_')}`;
+  return {
+    async read() {
+      try {
+        const raw = localStorage.getItem(lsKey);
+        const d = raw ? JSON.parse(raw) : null;
+        return d && typeof d.pages === 'object' ? d.pages : null;
+      } catch {
+        return null;
+      }
+    },
+    async write(pages) {
+      try {
+        localStorage.setItem(lsKey, JSON.stringify({ at: new Date().toISOString(), pages }));
+      } catch {
+        /* 配额满了就算了，不影响这次使用 */
+      }
+    },
+  };
+}
+
+async function ocrScannedFiles(project, { cfg, onProgress = () => {} }) {
+  const done = [];
+  for (const f of project.files || []) {
+    if (f.kind !== 'pdf' || !f.previewPdf || !isScannedDoc(f)) continue;
+    const blank = (f.blocks || []).filter((b) => isBlankPageText(b.text));
+    if (!blank.length) continue;
+    try {
+      // 要认整份，所以这里是 all 而不是 auto
+      const r = await rasterizeProjectPages(project, { mode: 'all', onProgress, only: [f.id] });
+      const ocr = await ocrPages({
+        pages: r.images.map((p) => ({ page: p.page, dataUrl: p.dataUrl })),
+        cfg,
+        emit: onProgress,
+        cache: ocrCacheFor(f.storedName || f.id),
+      });
+      const { blocks, hit } = applyOcrToBlocks(f.blocks, ocr.pages);
+      f.blocks = blocks;
+      // contextFor / buildContext 读的是存在文件上的 text，只改 blocks 没用
+      f.text = fileToText({ ...f, blocks });
+      f.chars = f.text.length;
+      f.meta = { ...(f.meta || {}), scanned: true, ocrPages: hit, ocrAt: new Date().toISOString() };
+      if (hit) {
+        onProgress(`「${f.originalName}」识别完成：${hit} 页文字已并入原文，之后各模式都读文字即可`);
+        done.push({ id: f.id, name: f.originalName, pages: hit });
+      }
+    } catch (err) {
+      onProgress(`「${f.originalName}」文字识别失败，这份仍按图片读：${err.message}`);
+    }
+  }
+  return done;
+}
+
 /** 只算每页的指标，不渲染 —— 给生成弹窗估算「自动模式会读几页」用 */
 async function projectPageStats(project) {
   const lib = window.pdfjsLib;
-  if (!lib) return { total: 0, auto: 0, files: [] };
+  const scanned = (project.files || [])
+    .filter((f) => isScannedDoc(f))
+    .map((f) => ({
+      id: f.id,
+      name: f.originalName,
+      pages: Number(f.meta?.pages) || 0,
+      ocrDone: Number(f.meta?.ocrPages) > 0,
+    }));
+  if (!lib) return { total: 0, auto: 0, files: [], scanned };
   const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
   let total = 0;
   let auto = 0;
@@ -332,7 +400,7 @@ async function projectPageStats(project) {
       /* 单份文件失败不影响其他文件 */
     }
   }
-  return { total, auto, files };
+  return { total, auto, files, scanned };
 }
 
 /**
@@ -342,11 +410,16 @@ async function projectPageStats(project) {
  * 纯文字页不渲染，也就不会把图片 token 花在它们身上。
  * @returns {Promise<{images:Array, total:number, selected:number, mode:string}>}
  */
-async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82, onProgress, mode = 'auto' } = {}) {
+async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82, onProgress, mode = 'auto', only = null } = {}) {
   const lib = window.pdfjsLib;
   if (!lib) return { images: [], total: 0, selected: 0, mode };
   if (mode === 'text') return { images: [], total: 0, selected: 0, mode };
-  const docs = (project.files || []).filter((f) => f.previewPdf && f.role !== 'video');
+  // only 传了就只渲染指定的文件（扫描件 OCR 要按文件单独跑，
+  // 否则多份文件的「第 1 页」会撞在一起）
+  const wantIds = only ? new Set(only) : null;
+  const docs = (project.files || []).filter(
+    (f) => f.previewPdf && f.role !== 'video' && (!wantIds || wantIds.has(f.id)),
+  );
   const multi = docs.length > 1;
   const images = [];
   let total = 0;
@@ -387,6 +460,7 @@ async function rasterizeProjectPages(project, { maxWidth = 1100, quality = 0.82,
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
         images.push({
+          fileId: f.id,
           file: f.originalName,
           page: n,
           label: multi ? `第 ${n} 页｜${f.originalName}` : `第 ${n} 页`,
@@ -803,6 +877,22 @@ export async function postSSE(path, body, onEvent) {
     if (!project.files.length) throw Object.assign(new Error('请先上传至少一个课件文件'), { status: 400 });
     const cfg = aiConfig();
     if (body?.name) project.name = String(body.name).slice(0, 120);
+    onEvent({ type: 'start', files: project.files.length, contextChars: 0, model: cfg.model });
+
+    // 扫描件先认字（只做一次，缓存）—— 必须在 buildContext 之前，
+    // 否则这次生成拿到的还是空文字。文字型 PDF 完全不进这里。
+    const ocrDone =
+      body?.ocrScanned === false
+        ? []
+        : await ocrScannedFiles(project, {
+            cfg,
+            onProgress: (message) => onEvent({ type: 'stage-detail', stage: 'analysis', message }),
+          });
+    if (ocrDone.length) await save(project);
+    const ocrIds = new Set(
+      (project.files || []).filter((f) => Number(f.meta?.ocrPages) > 0).map((f) => f.id),
+    );
+    // OCR 之后要重新拼上下文，否则新文字进不去
     const files = contextFor(project);
     onEvent({ type: 'start', files: project.files.length, contextChars: files.context.length, model: cfg.model });
 
@@ -816,12 +906,17 @@ export async function postSSE(path, body, onEvent) {
           mode: readMode,
           onProgress: (message) => onEvent({ type: 'stage-detail', stage: 'analysis', message }),
         });
-        pageImages = r.images;
+        // 刚识别过文字的扫描件不再发图 —— 内容已经在文字里了
+        pageImages = ocrIds.size ? r.images.filter((p) => !ocrIds.has(p.fileId)) : r.images;
         if (r.total) {
+          const skipped = r.images.length - pageImages.length;
           onEvent({
             type: 'stage-detail',
             stage: 'analysis',
-            message: `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图，其余按文字读`,
+            message:
+              `共 ${r.total} 页，按「${READ_MODE_LABEL[readMode]}」挑了 ${r.selected} 页读图` +
+              (skipped ? `，其中 ${skipped} 页已识别成文字、不再重复发图` : '') +
+              '，其余按文字读',
           });
         }
       } catch (err) {

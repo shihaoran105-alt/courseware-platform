@@ -2042,6 +2042,21 @@ function openAnalyzeModal() {
       const s = await api(`/api/projects/${state.project.id}/page-stats`);
       box = $('#readCostNote');
       if (!box) return;
+
+      // 扫描件要单独说清楚：它走的是「先批量识字、之后都读文字」这条路，
+      // 和「读几页图」完全是两回事
+      const scanned = arr(s?.scanned);
+      const todo = scanned.filter((x) => !x.ocrDone);
+      if (todo.length) {
+        const n = todo.reduce((a, x) => a + (x.pages || 0), 0);
+        box.innerHTML =
+          `${icon('alert', 12)} 有 <b>${todo.length}</b> 份材料是扫描件（没有文字层）：` +
+          `<b>${todo.map((x) => esc(x.name)).join('、')}</b>，共约 <b>${n}</b> 页。` +
+          `生成时会先用视觉模型把这些页的文字<b>批量识别</b>出来（一次跑完，只做一次并缓存），` +
+          `之后分析 / 事例 / 规划 / 总结 / 题 / Lab 全部读文字，不再反复发图片。` +
+          `已经识别过的扫描件会直接复用缓存，不重复花钱。`;
+        return;
+      }
       if (!s?.available || !s.total) {
         box.innerHTML = plain();
         return;
