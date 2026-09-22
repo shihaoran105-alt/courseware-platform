@@ -97,6 +97,27 @@ function toast(message, kind = '') {
   }, kind === 'err' ? 6500 : 3600);
 }
 
+/**
+ * 去掉 AI 回答里的加粗标记。** 对用户没有任何作用，留着就是字面量的星号。
+ */
+function stripBold(s) {
+  return String(s ?? '').replace(/\*\*/g, '');
+}
+
+/**
+ * AI 问答专用：把 ** 和 $ 全部去掉。
+ *
+ * 问答区不渲染数学公式，模型却习惯用 $…$ / $$…$$ 写 LaTeX，用户看到的就是一串
+ * 光秃秃的美元符号。** 同理 —— 虽然 mdToHtml 能把它渲染成加粗，但需求是「一个
+ * 标记都不留」，所以这里直接抹掉。
+ *
+ * 只用在问答（课件问答 / 右侧 AI 咨询）。课件分析那些面板里的 $0000、$FF 是
+ * AVR / 8086 的十六进制写法，有实际含义，不能一起抹掉。
+ */
+function stripAiMarks(s) {
+  return stripBold(s).replace(/\$/g, '');
+}
+
 /** 极简 Markdown → HTML（先转义，保证安全） */
 function mdToHtml(src) {
   const codeBlocks = [];
@@ -961,7 +982,7 @@ function dockMsgHtml(m) {
   const atts = arr(m.attachments);
   return `<div class="dock-msg ${isUser ? 'user' : 'ai'}">
     ${atts.length ? `<div class="dock-msg-atts">${atts.map((a) => `<span class="att-tag">${icon('quote', 10)}${esc(a.title)}</span>`).join('')}</div>` : ''}
-    ${m.content ? `<div class="dock-bubble">${isUser ? esc(m.content) : mdToHtml(m.content)}</div>` : ''}
+    ${m.content ? `<div class="dock-bubble">${isUser ? esc(m.content) : mdToHtml(stripAiMarks(m.content))}</div>` : ''}
   </div>`;
 }
 
@@ -1005,7 +1026,7 @@ async function dockSend() {
   const bump = () => {
     const box = $('#dockMsgs .dock-msg:last-child .dock-bubble');
     if (box) {
-      box.innerHTML = mdToHtml(local[local.length - 1].content);
+      box.innerHTML = mdToHtml(stripAiMarks(local[local.length - 1].content));
       scrollDock();
     }
   };
@@ -2262,7 +2283,7 @@ function renderExamples(ex) {
                 .map(
                   (s, si) => `<div class="step">
               <span class="dot">${si + 1}</span>
-              <div><h5>${esc(s.title)}</h5><p>${esc(s.detail)}</p></div>
+              <div><h5>${esc(stripBold(s.title))}</h5><p>${esc(stripBold(s.detail))}</p></div>
             </div>`,
                 )
                 .join('')}</div>`
@@ -2476,7 +2497,7 @@ function renderGuide(g) {
               <td class="mins">${esc(f.minutes ?? '—')}′</td>
               <td class="mins">${esc(f.location || '—')}</td>
               ${isStudy
-                ? `<td>${esc(f.whatToDo || '—')}</td><td>${esc(f.watchOut || '—')}</td><td>${esc(f.checkpoint || '—')}</td>`
+                ? `<td>${esc(stripBold(f.whatToDo) || '—')}</td><td>${esc(stripBold(f.watchOut) || '—')}</td><td>${esc(stripBold(f.checkpoint) || '—')}</td>`
                 : `<td>${esc(f.teacherAction || '—')}</td><td>${esc(f.studentAction || '—')}</td><td>${esc(f.howToUseCourseware || '—')}</td>`}
             </tr>`,
               )
@@ -2551,7 +2572,7 @@ function renderGuide(g) {
     : '';
 
   const positioning = g.positioning
-    ? `<div class="card"><h3>${icon('pin', 14)} ${g.byLevel ? '这份材料在你学习里的位置' : '这份课件的定位'}</h3><p style="margin:0;font-size:13.5px;color:var(--text-2)">${esc(g.positioning)}</p></div>`
+    ? `<div class="card"><h3>${icon('pin', 14)} ${g.byLevel ? '这份材料在你学习里的位置' : '这份课件的定位'}</h3><p style="margin:0;font-size:13.5px;color:var(--text-2)">${esc(stripBold(g.positioning))}</p></div>`
     : '';
 
   return positioning + flowCard + questions + activities + hw + diff + assessment + pitfalls + tips;
@@ -2925,7 +2946,7 @@ function msgHtml(role, content) {
   const isUser = role === 'user';
   return `<div class="msg ${isUser ? 'user' : 'assistant'}">
     <span class="avatar">${isUser ? '我' : 'AI'}</span>
-    <div class="bubble">${isUser ? esc(content).replace(/\n/g, '<br>') : mdToHtml(normalizeAnswer(content))}</div>
+    <div class="bubble">${isUser ? esc(content).replace(/\n/g, '<br>') : mdToHtml(stripAiMarks(normalizeAnswer(content)))}</div>
   </div>`;
 }
 
@@ -2956,7 +2977,7 @@ async function askChat(question) {
   let answer = '';
   let raf = null;
   const paint = () => {
-    bubble.innerHTML = mdToHtml(answer) + '<span style="opacity:.4">▌</span>';
+    bubble.innerHTML = mdToHtml(stripAiMarks(answer)) + '<span style="opacity:.4">▌</span>';
     scrollChat();
   };
   try {
@@ -2968,7 +2989,7 @@ async function askChat(question) {
         throw new Error(evt.message);
       }
     });
-    bubble.innerHTML = mdToHtml(answer) || '<i>（没有返回内容）</i>';
+    bubble.innerHTML = mdToHtml(stripAiMarks(answer)) || '<i>（没有返回内容）</i>';
     state.project.chat = state.project.chat || [];
     state.project.chat.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
   } catch (err) {

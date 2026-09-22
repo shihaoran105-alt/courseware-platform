@@ -1,9 +1,19 @@
 {
-  "version": "1.4.3",
-  "buildId": "2026-09-21-cmd-encoding-fix",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.4.3/courseware-platform-v1.4.3.zip",
-  "releasedAt": "2026-09-21T08:42:28.874Z",
+  "version": "1.4.4",
+  "buildId": "2026-09-22-markers-and-slide-fix",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.4.4/courseware-platform-v1.4.4.zip",
+  "releasedAt": "2026-09-22T00:15:55.747Z",
   "history": [
+    {
+      "version": "1.4.4",
+      "date": "2026-09-22",
+      "title": "修 AI 回答里的排版标记，以及「结合课件讲解」截图的张冠李戴",
+      "changes": [
+        "课件问答和右侧 AI 咨询的回答里不再出现 ** 和 $：问答区不渲染数学公式，模型却习惯用 $…$ / $$…$$ 写 LaTeX，用户看到的就是一串光秃秃的美元符号（实测现有 28 条回答里残留 326 个 $）。现在这两个标记在问答区统一去掉",
+        "「结合课件讲解」左边那栏的截图不再张冠李戴。以前固定挑「项目里第一份有 PDF 的文件」、页码用模型自由发挥的 pageRefs，于是不论原文来自题目还是答案册、换到第几道题，左边永远是同一份文件的第一页。现在改成按原文里标注的「（来自 哪个文件）」逐条对应：题目页归题目、答案页归答案",
+        "顺带修掉课件分析面板里字面显示的 **：学习规划的「定位」「要做什么 / 要小心什么」、事例讲解的步骤说明、结合课件讲解的知识点与解题步骤，之前会把 ** 原样显示成星号。这些面板里的 $0000、$FF 是 AVR / 8086 的十六进制写法，有实际含义，特意保持不动"
+      ]
+    },
     {
       "version": "1.4.3",
       "date": "2026-09-21",

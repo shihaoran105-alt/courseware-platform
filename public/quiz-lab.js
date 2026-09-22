@@ -201,30 +201,74 @@ function parseExcerpt(text) {
   return out;
 }
 
-/** 从 pageRefs 找出「哪份课件的哪一页」，用于渲染原生页面截图 */
-function explainSlideRefs(r) {
+/** 从「第 3 页」这类标签里取页码；取不到返回 0 */
+function pageNumOf(label) {
+  const s = String(label ?? '');
+  const m =
+    s.match(/第\s*(\d+)\s*页/) ||
+    s.match(/page\s*(\d+)/i) ||
+    s.match(/\b(\d+)\s*页/) ||
+    s.match(/^\s*(\d+)\s*$/);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * 「课件原文」该显示哪几张页面截图。
+ *
+ * 关键：文件必须跟着 excerpt 走。excerpt 里每一条都写着「（来自 哪个文件）」，
+ * 标签就是那一页的页码，所以「这道题引用了哪份文件的哪一页」本来是清楚的。
+ *
+ * 原来的写法是固定挑「项目里第一份有 previewPdf 的文件」，页码则拿模型自由
+ * 发挥的 pageRefs —— 于是不论这道题的原文来自题目还是答案册、也不论换到第几
+ * 道题，左边永远渲染同一份文件的第一页。（实测 tut1：原文分别来自
+ * Tutorial_1_Questions.pdf 和 Tutorial_1_Solutions.pdf，却被渲染成同一份。）
+ */
+function explainSlideRefs(r, blocks) {
   const files = state.project?.files || [];
-  const cw =
+  const byName = new Map(files.map((f) => [String(f.originalName || ''), f]));
+
+  const out = [];
+  const seen = new Set();
+  const push = (file, page, ref) => {
+    const f = byName.get(String(file || ''));
+    if (!f?.previewPdf || !page) return;
+    const key = `${f.id}#${page}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ ref: ref || `第 ${page} 页`, page, pdf: f.previewPdf, fileName: f.originalName });
+  };
+
+  // 1) 逐条按 excerpt 的真实来源对应：题目页归题目文件，答案页归答案文件
+  for (const b of arr(blocks)) push(b.file, pageNumOf(b.label), b.label);
+  if (out.length) return out;
+
+  // 2) excerpt 的标签不是页码时（docx / txt 的标签是「段落」「Objectives」这种），
+  //    退回用模型给的页码，但候选文件只能从 excerpt 真正引用过的那几份里挑，
+  //    不能再抓项目里的第一份，否则照样张冠李戴。
+  const cited = [...new Set(arr(blocks).map((b) => String(b.file || '')).filter(Boolean))]
+    .map((n) => byName.get(n))
+    .filter((f) => f?.previewPdf);
+  // 3) excerpt 整个是空的（没定位到原文）才退回旧行为
+  const target =
+    cited[0] ||
     files.find((f) => f.role === 'courseware' && f.previewPdf) ||
     files.find((f) => f.previewPdf);
-  const pages = arr(r.pageRefs)
-    .map((p) => String(p).match(/\d+/))
-    .filter(Boolean)
-    .map((m) => Number(m[0]))
-    .filter((n) => n > 0);
-  if (!cw || !pages.length) return [];
-  return pages.map((page, i) => ({
-    ref: arr(r.pageRefs)[i] || `第 ${page} 页`,
-    page,
-    pdf: cw.previewPdf,
-    fileName: cw.originalName,
-  }));
+  if (!target) return [];
+  return arr(r.pageRefs)
+    .map((p) => pageNumOf(p))
+    .filter((n) => n > 0)
+    .map((page) => ({
+      ref: `第 ${page} 页`,
+      page,
+      pdf: target.previewPdf,
+      fileName: target.originalName,
+    }));
 }
 
 function explainPanel(q, entry) {
   const r = entry.result || {};
   const blocks = parseExcerpt(entry.excerpt);
-  const slideRefs = explainSlideRefs(r);
+  const slideRefs = explainSlideRefs(r, blocks);
   // 这次讲解是不是依据老师发的答案册生成的
   const keyFrom = entry.answerKeyUsed || '';
 
@@ -292,7 +336,7 @@ function explainPanel(q, entry) {
                     return `<div class="kp-card" ${d.attrs}>
                     <div class="kp-top"><span class="kp-idx">${i + 1}</span><b>${esc(k.point)}</b></div>
                     <div class="kp-quote"><span class="kp-tag">课件原文</span>${esc(k.coursewareSays)}</div>
-                    <div class="kp-apply"><span class="kp-tag">用在本题</span>${esc(k.howItApplies)}</div>
+                    <div class="kp-apply"><span class="kp-tag">用在本题</span>${esc(stripBold(k.howItApplies))}</div>
                     ${d.btn}
                   </div>`;
                   })
@@ -316,8 +360,8 @@ function explainPanel(q, entry) {
                       return `<div class="step" ${d.attrs}>
                       <span class="dot">${esc(s.step ?? i + 1)}</span>
                       <div>
-                        <h5>${esc(s.title)}</h5>
-                        <p>${esc(s.detail)}</p>
+                        <h5>${esc(stripBold(s.title))}</h5>
+                        <p>${esc(stripBold(s.detail))}</p>
                         ${s.basedOn ? `<div class="step-based">依据：${esc(s.basedOn)}</div>` : ''}
                       </div>
                       ${d.btn}
