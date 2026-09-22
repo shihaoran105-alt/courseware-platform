@@ -211,15 +211,48 @@ export function isContextOverflow(err) {
 const shouldShrinkImages = (err) => isPayloadTooLarge(err) || isContextOverflow(err);
 
 /** 把「一段文字 + 若干张图」拼成 OpenAI 兼容的多模态 content */
-export function buildContent(user, images) {
+export function buildContent(user, images, { budget } = {}) {
   // 这里是所有请求的唯一出口，在这里兜底裁一次，任何调用点都不可能发出超限的请求
-  const { used } = packImages(images);
+  const { used } = packImages(images, budget ? { budget } : undefined);
   if (!used.length) return user;
   return [
     { type: 'text', text: user },
     ...used.map((im) => ({ type: 'image_url', image_url: { url: urlOf(im) } })),
   ];
 }
+
+/**
+ * 记住「这家服务商的请求体上限大概是多少」。
+ *
+ * 不同网关差得很远：api.deepseek.com 实测在 50 MB 处才 413，
+ * 而不少中转/自建网关只有几 MB 甚至几百 KB。与其每次发出去撞一次墙，
+ * 不如撞过之后把上限记下来，后面的请求直接从更小的预算开始。
+ * key 用 baseUrl，所以换服务商不会互相污染。
+ */
+const tooBigByBase = new Map();
+
+/** 这家服务商据我们所知不能超过多少字节（没记录就返回 null） */
+export function knownBodyLimit(baseUrl = '') {
+  const v = tooBigByBase.get(String(baseUrl));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+function rememberTooBig(baseUrl, bytes) {
+  const k = String(baseUrl || '');
+  const prev = tooBigByBase.get(k);
+  if (!Number.isFinite(prev) || bytes < prev) tooBigByBase.set(k, bytes);
+}
+
+/** 请求体的实际字节数（用来记账，也用来在报错里说清楚到底发了多大） */
+function bodyBytes(spec) {
+  try {
+    return Buffer.byteLength(JSON.stringify(spec.body));
+  } catch {
+    return 0;
+  }
+}
+
+const mb = (n) => `${(n / 1048576).toFixed(2)} MB`;
 
 export async function complete(
   cfg,
@@ -228,10 +261,15 @@ export async function complete(
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
 
+  let prompt = user;
+  // 撞过 413 就按已知上限折半留余量，别再从头撞一遍
+  const known = knownBodyLimit(cfg.baseUrl);
+  const budget = known ? Math.max(64 * 1024, Math.floor(known / 2)) : IMAGE_BUDGET_BYTES;
+
   const spec = (imgs) => {
     const hasImages = Array.isArray(imgs) && imgs.length > 0;
     const body = {
-      messages: [...messages, { role: 'user', content: buildContent(user, imgs) }],
+      messages: [...messages, { role: 'user', content: buildContent(prompt, imgs, { budget }) }],
       max_tokens: maxTokens,
       temperature,
       stream: false,
@@ -249,28 +287,51 @@ export async function complete(
   };
 
   let imgs = images;
+  // 图要一路退到 0 张，文字还要能继续折半，所以步子给够
+  const MAX_SHRINK = 10;
   for (let attempt = 0; ; attempt++) {
     const cur = spec(imgs);
+    const bytes = bodyBytes(cur);
     try {
       return await read(cur);
     } catch (err) {
-      // 请求体太大（网关 413）或上下文塞不下：减半图片重试，而不是让整节直接失败。
-      // 对面网关的上限、模型的上下文我们都没法预知，所以宁可自己一步步退让。
-      if (shouldShrinkImages(err) && Array.isArray(imgs) && imgs.length > 1 && attempt < 3) {
-        const next = Math.max(1, Math.floor(imgs.length / 2));
-        const why = isPayloadTooLarge(err) ? '请求体过大' : '上下文超限';
-        console.warn(`[vision] ${why}（带了 ${imgs.length} 张图），降到 ${next} 张重试`);
-        imgs = sampleEven(imgs, next);
-        continue;
+      if (!shouldShrinkImages(err)) {
+        // 有些第三方 OpenAI 兼容接口不支持 response_format，降级重试一次（提示词里已经要求输出 JSON）
+        const unsupported = err?.status === 400 || err?.status === 404 || err?.status === 422;
+        if (json && unsupported && cur.body.response_format) {
+          const fallback = { ...cur, body: { ...cur.body } };
+          delete fallback.body.response_format;
+          return await read(fallback);
+        }
+        throw err;
       }
-      // 有些第三方 OpenAI 兼容接口不支持 response_format，降级重试一次（提示词里已经要求输出 JSON）
-      const unsupported = err?.status === 400 || err?.status === 404 || err?.status === 422;
-      if (json && unsupported && cur.body.response_format) {
-        const fallback = { ...cur, body: { ...cur.body } };
-        delete fallback.body.response_format;
-        return await read(fallback);
+
+      rememberTooBig(cfg.baseUrl, bytes);
+      if (attempt >= MAX_SHRINK) {
+        throw new AIError(
+          `请求体 ${mb(bytes)} 被模型网关拒绝了（${isPayloadTooLarge(err) ? '413' : '上下文超限'}）。` +
+            `已经退到最小仍然不行：这次带了 ${Array.isArray(imgs) ? imgs.length : 0} 张图、文字 ${prompt.length} 字。` +
+            `请检查所配置的接口地址（${cfg.baseUrl}）的请求体上限。`,
+          { status: err?.status || 413 },
+        );
       }
-      throw err;
+
+      const count = Array.isArray(imgs) ? imgs.length : 0;
+      if (count > 0) {
+        // 一直退到 0 张 —— 只发文字。文字通常只有几百 KB，任何网关都过得去。
+        // 之前只退 3 次（40→20→10→5）就放弃，遇到上限很紧的中转网关照样 413。
+        const next = Math.floor(count / 2);
+        console.warn(
+          `[vision] ${isPayloadTooLarge(err) ? '请求体过大' : '上下文超限'}（${mb(bytes)}, ${count} 张图），` +
+            `降到 ${next} 张重试`,
+        );
+        imgs = next > 0 ? sampleEven(imgs, next) : [];
+      } else {
+        // 一张图都没有还超限，那只能是文字太长 —— 砍掉后半段再试
+        const keep = Math.max(2000, Math.floor(prompt.length / 2));
+        console.warn(`[vision] 纯文字请求也被拒（${mb(bytes)}），把上下文从 ${prompt.length} 字砍到 ${keep} 字重试`);
+        prompt = `${prompt.slice(0, keep)}\n\n……（因接口请求体限制，后半部分已省略）`;
+      }
     }
   }
 }
@@ -336,17 +397,49 @@ export async function stream(
   { system, messages = [], user, images = null, maxTokens = 4096, temperature = 0.3, signal, onDelta },
 ) {
   system = withLang(system, cfg?.lang || 'zh');
-  const hasImages = Array.isArray(images) && images.length > 0;
-  const payload = [];
-  if (system) payload.push({ role: 'system', content: system });
-  payload.push(...messages);
-  if (user) payload.push({ role: 'user', content: buildContent(user, images) });
+  const known = knownBodyLimit(cfg.baseUrl);
+  const budget = known ? Math.max(64 * 1024, Math.floor(known / 2)) : IMAGE_BUDGET_BYTES;
 
-  const res = await request(
-    cfg,
-    { messages: payload, max_tokens: maxTokens, temperature, stream: true },
-    { signal, model: hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model },
-  );
+  // 问答一般不带图，但整份课件的上下文可能有几十万字。413 发生在读到响应体之前，
+  // 所以还没吐出任何增量时可以安全重试 —— 砍一半上下文再发。
+  let prompt = user;
+  let imgs = images;
+  let res = null;
+  for (let attempt = 0; ; attempt++) {
+    const hasImages = Array.isArray(imgs) && imgs.length > 0;
+    const payload = [];
+    if (system) payload.push({ role: 'system', content: system });
+    payload.push(...messages);
+    if (prompt) payload.push({ role: 'user', content: buildContent(prompt, imgs, { budget }) });
+
+    try {
+      res = await request(
+        cfg,
+        { messages: payload, max_tokens: maxTokens, temperature, stream: true },
+        { signal, model: hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model },
+      );
+      break;
+    } catch (err) {
+      const bytes = (() => {
+        try {
+          return Buffer.byteLength(JSON.stringify(payload));
+        } catch {
+          return 0;
+        }
+      })();
+      if (!shouldShrinkImages(err) || attempt >= 10) throw err;
+      rememberTooBig(cfg.baseUrl, bytes);
+      if (Array.isArray(imgs) && imgs.length) {
+        const next = Math.floor(imgs.length / 2);
+        console.warn(`[vision] 流式请求体过大（${mb(bytes)}），图降到 ${next} 张重试`);
+        imgs = next > 0 ? sampleEven(imgs, next) : [];
+      } else {
+        const keep = Math.max(2000, Math.floor((prompt || '').length / 2));
+        console.warn(`[vision] 流式请求体过大（${mb(bytes)}），上下文从 ${(prompt || '').length} 字砍到 ${keep} 字重试`);
+        prompt = `${(prompt || '').slice(0, keep)}\n\n……（因接口请求体限制，后半部分已省略）`;
+      }
+    }
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

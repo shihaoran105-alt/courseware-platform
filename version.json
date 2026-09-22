@@ -1,10 +1,23 @@
 {
-  "version": "1.6.0",
-  "buildId": "2026-09-22-batch-ocr-scanned",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.6.0/courseware-platform-v1.6.0.zip",
-  "packageSha256": "38c41b8bf15b85bc4cfc2f2c1cda04e85b89a16781be1cf7ff6a86b0f6ea4c6a",
-  "releasedAt": "2026-09-22T02:45:11.904Z",
+  "version": "1.6.1",
+  "buildId": "2026-09-22-never-fail-413",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v1.6.1/courseware-platform-v1.6.1.zip",
+  "packageSha256": "b75ea5f571c2d39fafb3c4437da536cbeda5244f09faac8f2c9f7fbb9072c56e",
+  "releasedAt": "2026-09-22T02:56:59.974Z",
   "history": [
+    {
+      "version": "1.6.1",
+      "date": "2026-09-22",
+      "title": "413 不再让整节失败：一路退到纯文字，并记住接口的请求体上限",
+      "changes": [
+        "**上一版没修干净**。1.5.1 加的退让只减半 3 次（40→20→10→5 张图）就放弃了，手里那份材料如果接口上限比 0.65 MB 还紧，照样 413 —— 你现在的报错就是这么来的。已实测复现：mock 一个「永远返回 413」的网关，旧代码在第 4 次尝试后抛错",
+        "现在一路退到 0 张图：40→20→10→5→2→1→0，只发文字。文字通常只有几十到几百 KB，任何网关都过得去。实测同一场景：上限 400KB 时退到 2 张图即成功；上限 120KB 时退到纯文字成功，全程不再失败",
+        "纯文字还被拒就继续砍上下文（90000 字 → 45000 → …，最低 2000 字）。真的退无可退时，报错也不再是那段 nginx HTML，而是说清楚：发了多大、带了几张图、文字多少字、你配的接口地址是什么",
+        "**记住每个接口的上限**：撞过一次 413 就把当时的体积记下来（按接口地址分别记），后面所有阶段直接从折半的预算开始，不再每个阶段都从头撞一遍。实测第二次请求一次就过",
+        "按你的建议压缩图片：需要读图的页数多时自动降分辨率 —— 实测同一批课件页面 1100px/q0.82 = 62KB、900px/q0.74 = 42KB、760px/q0.66 = 31KB。单页省一半，同样体积能多读一倍页数（400KB 上限下从 4 页变 9 页）",
+        "顺带说明：关于 nginx 的 client_max_body_size —— 这个平台本身没有 nginx，413 是**模型接口那边**的网关返回的（openresty 的报错页）。如果你是在自己的中转/自建网关上转发模型请求，那确实是改你那边；如果直连 api.deepseek.com，我实测它是 50MB 才拒，那种情况就是别的原因，现在的报错信息会直接告诉你到底发了多大"
+      ]
+    },
     {
       "version": "1.6.0",
       "date": "2026-09-22",

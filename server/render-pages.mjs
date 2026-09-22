@@ -73,6 +73,20 @@ const JPEG_QUALITY = Number(process.env.PAGE_IMAGE_QUALITY) || 0.82;
 const BATCH = 6;
 
 /**
+ * 页数多的时候主动降分辨率/画质。
+ *
+ * 不少中转网关的请求体上限只有几百 KB，而单页 1100px/0.82 就有 60 KB 左右 ——
+ * 那样一次只塞得下三四页。降一档单页能省一半，同样体积能多读一倍页数；
+ * 表格框线、标题这种关键信息仍然看得清。
+ * （实测同一批课件页面：1100/0.82 = 62KB、900/0.74 = 42KB、760/0.66 = 31KB）
+ */
+export function renderProfile(pageCount) {
+  if (pageCount <= 24) return { maxWidth: MAX_WIDTH, quality: JPEG_QUALITY };
+  if (pageCount <= 60) return { maxWidth: 900, quality: 0.74 };
+  return { maxWidth: 760, quality: 0.66 };
+}
+
+/**
  * 「这页要不要读图」的阈值和挑选规则都在 page-select.mjs，服务端和静态版共用一份。
  * 这里既 import（自己要用 selectPages）又 re-export（对外保持原有导出名）。
  */
@@ -310,7 +324,7 @@ export async function pageStats({ pdfPath, cacheKey, signal } = {}) {
  * @param {'auto'|'all'|'text'} [opts.mode] 读图模式，默认 auto
  * @returns {Promise<{pages: Array, total:number, selected:number, mode:string, fromCache:boolean}>}
  */
-export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode = 'auto' }) {
+export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode = 'auto', profile = null }) {
   const bin = findChrome();
   if (!bin) throw new Error('没找到 Chrome，无法把课件页面渲染成图片');
   if (!fs.existsSync(pdfPath)) throw new Error('预览 PDF 不存在：' + pdfPath);
@@ -351,7 +365,12 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode
     const have = new Set(renderedPages(dir).map((p) => p.page));
     const todo = want.filter((n) => !have.has(n));
 
-    // 2) 只渲染缺的那几页
+    // 2) 只渲染缺的那几页。页数多就降分辨率 —— 单页越小，同样的请求体
+    // 预算里能塞下越多页，这对「网关上限很紧」的场景是决定性的
+    const prof = profile || renderProfile(want.length);
+    if (prof.maxWidth !== MAX_WIDTH) {
+      onProgress?.(`这份材料需要读图的页较多，按 ${prof.maxWidth}px 渲染以压缩体积`);
+    }
     for (let i = 0; i < todo.length; i += BATCH) {
       if (signal?.aborted) throw Object.assign(new Error('已取消'), { name: 'AbortError' });
       const chunk = todo.slice(i, i + BATCH);
@@ -360,7 +379,7 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode
       );
       const list = JSON.parse(
         await cdp.evaluate(
-          `window.__rasterPages(${JSON.stringify(chunk)}, ${MAX_WIDTH}, ${JPEG_QUALITY})`,
+          `window.__rasterPages(${JSON.stringify(chunk)}, ${prof.maxWidth}, ${prof.quality})`,
         ),
       );
       for (const item of list || []) {
