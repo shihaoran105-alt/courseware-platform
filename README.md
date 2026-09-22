@@ -11,7 +11,8 @@
 | **服务端版**（Node） | 自己机器 / 服务器 / 学校内网 | 有统一入口、会话隔离、配额限流；也可公开部署让别人自带 Key |
 | **纯静态版**（GitHub Pages） | 零成本分享给所有人 | 没有服务器，**一行后端代码都不需要**；文件解析和模型调用全在浏览器里跑，课件不出本机 |
 
-> 静态版直接跳到 [部署到 GitHub Pages](#部署到-github-pages纯静态版)。
+> **不想装任何东西**：静态版已经部署好了 —— <https://shihaoran105-alt.github.io/courseware-platform/>
+> 打开填个 API Key 就能用。想自己部署看 [部署到 GitHub Pages](#部署到-github-pages纯静态版)。
 
 ---
 
@@ -813,6 +814,9 @@ pm2 save && pm2 startup
 **可以，而且不需要任何服务器。** 因为实测 DeepSeek 接口支持浏览器跨域（CORS），
 所以文件解析和模型调用都能直接在前端做：`docs/` 是一份纯静态站点，丢到 GitHub Pages 就能用。
 
+> **本仓库的静态版已经部署好了：<https://shihaoran105-alt.github.io/courseware-platform/>**
+> 打开就能用（需要自己填一个 API Key）。下面是原理和自行部署的步骤。
+
 ### 为什么能做成纯静态
 
 | 原本要服务器做的事 | 静态版怎么做 |
@@ -821,6 +825,7 @@ pm2 save && pm2 startup
 | 解析 PPTX / DOCX / XLSX | JSZip 在浏览器里读 OOXML（和服务器版同一套逻辑） |
 | 解析 TXT 的 GBK 编码 | 浏览器原生 `TextDecoder('gbk')`，不需要 iconv |
 | 存课件和分析结果 | IndexedDB（不可用时自动降级 localStorage） |
+| 扫描件识字结果的缓存 | localStorage（服务端版是落盘到 `data/cache/ocr/`） |
 | 调用模型 | 浏览器直连 DeepSeek，**不经过任何服务器** |
 
 也就是说：**课件一个字都不会上传到任何地方**，只把提取出的文字发给你自己填的那个模型接口。
