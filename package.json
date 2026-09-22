@@ -13,6 +13,7 @@
     "build:static": "node scripts/build-static.mjs",
     "preview:static": "node scripts/serve-static.mjs",
     "test:extract": "node scripts/test-extract.mjs",
+    "test:stt": "node scripts/test-stt.mjs",
     "version:show": "node scripts/bump-version.mjs show",
     "version:minor": "node scripts/bump-version.mjs minor",
     "version:patch": "node scripts/bump-version.mjs patch",
