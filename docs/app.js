@@ -2048,6 +2048,16 @@ function openAnalyzeModal() {
       }
       const rest = Math.max(0, s.total - s.auto);
       const k = (n) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+      const cap = Number(s.maxImages) || 0;
+      // 需要读图的页数超过「单次请求装得下」的量时，别再说「选全部读图就能全读到」——
+      // 那是做不到的，得如实说明会自动均匀取样。
+      if (cap && s.auto > cap) {
+        box.innerHTML =
+          `${icon('alert', 12)} 这份材料共 <b>${s.total}</b> 页，其中 <b>${s.auto}</b> 页需要读图。` +
+          `一次性发给模型装不下这么多图，会自动按整份材料<b>均匀取样</b>（最多 ${cap} 页，图大的话更少），` +
+          `其余页面按文字读。想让模型读到更多页，可以把这份材料拆成几份分别上传。`;
+        return;
+      }
       box.innerHTML =
         `${icon('alert', 12)} 这份材料共 <b>${s.total}</b> 页。自动模式预计只读 <b>${s.auto}</b> 页的图，` +
         `其余 <b>${rest}</b> 页按文字读。` +

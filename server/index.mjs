@@ -63,7 +63,7 @@ import {
 import { extractAudio, ffmpegState } from './media-tools.mjs';
 import { sttProvider, sttState, transcribe } from './stt.mjs';
 import { rendererState } from './config.mjs';
-import { complete } from './ai/client.mjs';
+import { complete, MAX_IMAGES_PER_REQUEST } from './ai/client.mjs';
 import { toMarkdown } from './export.mjs';
 import { buildPreviewPdf, canRender, mediaName } from './render.mjs';
 import { classifyRole, isDocKind, isValidRole, matchSolution, ROLE_CATALOG, roleLabel } from './roles.mjs';
@@ -349,7 +349,7 @@ app.get('/api/projects/:id/page-stats', async (req, res) => {
       /* 单份文件分析失败不影响其他文件 */
     }
   }
-  res.json({ ok: true, available: true, total, auto, all: total, files });
+  res.json({ ok: true, available: true, total, auto, all: total, maxImages: MAX_IMAGES_PER_REQUEST, files });
 });
 
 /** 改项目名 / 把项目移到另一个组（groupId 传空字符串 = 移出分组） */

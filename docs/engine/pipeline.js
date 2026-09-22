@@ -3,7 +3,7 @@
  *
  * 每个阶段独立容错：某一阶段失败不会让整体失败，前端会看到哪一步出错。
  */
-import { AIError, completeJSON, stream } from './ai.js';
+import { AIError, completeJSON, packImages, stream } from './ai.js';
 import {
   ALIGN_SYSTEM,
   ANALYZE_SYSTEM,
@@ -129,7 +129,9 @@ export async function generateNarration({
       message: `正在撰写讲解稿 ${i + 1}/${chunks.length}（${chunks[i].file}）`,
     });
     try {
-      const pages = pagesOfChunk(chunks[i]);
+      // 这一段可能覆盖很多页，同样裁到单次请求放得下的规模，
+      // 保证上面列的「附了截图」和真正发出去的图一致
+      const pages = packImages(pagesOfChunk(chunks[i])).used;
       const { data, usage } = await completeJSON(cfg, {
         system: NARRATION_SYSTEM,
         images: pages.map((p) => p.dataUrl).filter(Boolean),
@@ -185,6 +187,29 @@ export async function runFullAnalysis({
    * 全靠它。一页约 370-1000 tokens，比重新生成一遍便宜得多。
    */
   const allPages = () => pageImages || [];
+  /**
+   * 单次请求能带的页面截图有上限：网关按体积拒（实测 50 MB 处 413），
+   * 模型上下文也放不下 200 多张图。以前是「有几页发几页」，
+   * 一本 224 页的扫描教材渲染出来 60–70 MB，必然 413 且整节失败。
+   * 这里统一裁一次，并如实告诉用户裁掉了多少（只报一次，不刷屏）。
+   */
+  let packedInfo = null;
+  const packedPages = () => {
+    if (!packedInfo) {
+      packedInfo = packImages(allPages());
+      if (packedInfo.dropped > 0) {
+        emit({
+          type: 'stage-detail',
+          stage: 'analysis',
+          level: 'warn',
+          message:
+            `需要读图的页面有 ${allPages().length} 页，单次请求最多带 ${packedInfo.used.length} 页，` +
+            `已按整份材料均匀取样；其余页面按文字读`,
+        });
+      }
+    }
+    return packedInfo.used;
+  };
   const imgsFor = (list) => (list || []).map((p) => p.dataUrl).filter(Boolean);
   /** 告诉模型后面附了哪些页面截图，否则它不知道那些图是什么、哪张对应第几页 */
   const withPages = (prompt, list) =>
@@ -230,8 +255,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: ANALYZE_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(analyzeUser(context, summary), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(analyzeUser(context, summary), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -246,8 +271,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: EXAMPLES_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(examplesUser(context, summary), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(examplesUser(context, summary), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -262,8 +287,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: GUIDE_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(guideUser(context, summary), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(guideUser(context, summary), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -284,8 +309,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: SUMMARY_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(summaryUser(context, summary), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(summaryUser(context, summary), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -300,8 +325,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: QUIZ_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(quizUser(context, summary, key.text), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(quizUser(context, summary, key.text), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -316,8 +341,8 @@ export async function runFullAnalysis({
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
           system: LAB_SYSTEM,
-          images: imgsFor(allPages()),
-          user: withPages(labUser(context, summary), allPages()),
+          images: imgsFor(packedPages()),
+          user: withPages(labUser(context, summary), packedPages()),
           maxTokens: 8000,
           signal,
         });
@@ -414,6 +439,29 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
   const summary = fileSummary(files.list);
   // 单节重跑同样要带页面截图，否则用户点「重新生成本节」得到的还是纯文字版本
   const allPages = () => pageImages || [];
+  /**
+   * 单次请求能带的页面截图有上限：网关按体积拒（实测 50 MB 处 413），
+   * 模型上下文也放不下 200 多张图。以前是「有几页发几页」，
+   * 一本 224 页的扫描教材渲染出来 60–70 MB，必然 413 且整节失败。
+   * 这里统一裁一次，并如实告诉用户裁掉了多少（只报一次，不刷屏）。
+   */
+  let packedInfo = null;
+  const packedPages = () => {
+    if (!packedInfo) {
+      packedInfo = packImages(allPages());
+      if (packedInfo.dropped > 0) {
+        emit({
+          type: 'stage-detail',
+          stage: 'analysis',
+          level: 'warn',
+          message:
+            `需要读图的页面有 ${allPages().length} 页，单次请求最多带 ${packedInfo.used.length} 页，` +
+            `已按整份材料均匀取样；其余页面按文字读`,
+        });
+      }
+    }
+    return packedInfo.used;
+  };
   const imgsFor = (list) => (list || []).map((p) => p.dataUrl).filter(Boolean);
   const withPages = (prompt, list) =>
     list && list.length
@@ -424,8 +472,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'analysis': {
       const { data } = await completeJSON(cfg, {
         system: ANALYZE_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(analyzeUser(context, summary), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(analyzeUser(context, summary), packedPages()),
         maxTokens: 8000,
         signal,
       });
@@ -434,8 +482,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'examples': {
       const { data } = await completeJSON(cfg, {
         system: EXAMPLES_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(examplesUser(context, summary), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(examplesUser(context, summary), packedPages()),
         maxTokens: 8000,
         signal,
       });
@@ -444,8 +492,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'guide': {
       const { data } = await completeJSON(cfg, {
         system: GUIDE_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(guideUser(context, summary), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(guideUser(context, summary), packedPages()),
         maxTokens: 8000,
         signal,
       });
@@ -456,8 +504,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'quiz': {
       const { data } = await completeJSON(cfg, {
         system: QUIZ_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(quizUser(context, summary, answerKeyExcerpt(files, {}).text), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(quizUser(context, summary, answerKeyExcerpt(files, {}).text), packedPages()),
         maxTokens: 8000,
         signal,
       });
@@ -466,8 +514,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'lab': {
       const { data } = await completeJSON(cfg, {
         system: LAB_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(labUser(context, summary), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(labUser(context, summary), packedPages()),
         maxTokens: 8000,
         signal,
       });
@@ -476,8 +524,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     case 'summary': {
       const { data } = await completeJSON(cfg, {
         system: SUMMARY_SYSTEM,
-        images: imgsFor(allPages()),
-        user: withPages(summaryUser(context, summary), allPages()),
+        images: imgsFor(packedPages()),
+        user: withPages(summaryUser(context, summary), packedPages()),
         maxTokens: 8000,
         signal,
       });

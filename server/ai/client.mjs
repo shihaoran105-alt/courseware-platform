@@ -125,17 +125,99 @@ async function request(cfg, body, { signal, retries = 3, model } = {}) {
   throw lastErr;
 }
 
-/** 一次性拿到完整回复 */
+/**
+ * 单次请求最多带多少张页面截图 / 多少字节的 base64。
+ *
+ * 实测 api.deepseek.com 的网关在请求体约 50 MB 处返回 413（41.7 MB 通过、52.1 MB 被拒）。
+ * 之前是「有几页就发几页」，一本 224 页的扫描教材渲染出来 60–70 MB，必然 413，
+ * 而且整节直接失败。
+ *
+ * 所以主约束是**体积**（16 MB，留三倍安全余量），张数上限只是兜底。
+ * 张数没卡死，是因为一页约 400–1300 tokens 本来就在模型上下文里，
+ * 而 95 页这种规模之前是跑得通的，不能因为修 413 把它一起砍掉。
+ */
+/** 读一个数字型环境变量；浏览器里没有 process，静态版会用到这个模块 */
+function envNum(name, fallback) {
+  try {
+    const v = Number(process.env[name]);
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export const MAX_IMAGES_PER_REQUEST = envNum('AI_MAX_IMAGES', 80);
+export const IMAGE_BUDGET_BYTES = envNum('AI_IMAGE_BUDGET_MB', 16) * 1024 * 1024;
+
+/** 取图片的 base64 字符串（图片既可能是字符串，也可能是带 dataUrl 的页面对象） */
+const urlOf = (im) => (typeof im === 'string' ? im : im?.dataUrl || im?.url || '');
+
+/** 从 list 里均匀取 n 个（保留首尾），n >= list.length 时原样返回 */
+export function sampleEven(list, n) {
+  const src = Array.isArray(list) ? list : [];
+  if (n >= src.length) return src.slice();
+  if (n <= 1) return src.length ? [src[0]] : [];
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < n; i++) {
+    const idx = Math.round((i * (src.length - 1)) / (n - 1));
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    out.push(src[idx]);
+  }
+  return out;
+}
+
+/**
+ * 把图片列表裁到「单次请求放得下」的规模。
+ *
+ * 超出时**按整份材料均匀取样**，而不是只留前 N 页 —— 一本 224 页的书只送前 24 页，
+ * 分析出来的结论会严重偏向前言和目录。
+ */
+export function packImages(images = [], opts = {}) {
+  const list = (images || []).filter(Boolean);
+  const max = Number(opts.max) > 0 ? Number(opts.max) : MAX_IMAGES_PER_REQUEST;
+  const budget = Number(opts.budget) > 0 ? Number(opts.budget) : IMAGE_BUDGET_BYTES;
+  if (!list.length) return { used: [], dropped: 0, bytes: 0 };
+
+  let used = sampleEven(list, Math.min(max, list.length));
+  let bytes = used.reduce((n, im) => n + urlOf(im).length, 0);
+  // 张数够了但体积还超预算（整页扫描件单页就很大）→ 再降一档重新均匀取样
+  while (used.length > 1 && bytes > budget) {
+    used = sampleEven(list, Math.max(1, Math.floor(used.length * 0.7)));
+    bytes = used.reduce((n, im) => n + urlOf(im).length, 0);
+  }
+  return { used, dropped: list.length - used.length, bytes };
+}
+
+/** 网关因为请求体太大拒掉（413 / Request Entity Too Large） */
+export function isPayloadTooLarge(err) {
+  if (err?.status === 413) return true;
+  return /413|entity too large|payload too large|request body too large/i.test(String(err?.message || ''));
+}
+
+/**
+ * 上下文塞不下（图太多把 token 撑爆了）。
+ * 不同家措辞不一样，所以按关键词认。
+ */
+export function isContextOverflow(err) {
+  const s = String(err?.message || '');
+  return /maximum context length|context length|context_length_exceeded|too many tokens|reduce the length|exceeds the maximum|token limit/i.test(
+    s,
+  );
+}
+
+/** 请求体太大 或者 上下文塞不下 —— 两种情况都靠「少发几张图」自救 */
+const shouldShrinkImages = (err) => isPayloadTooLarge(err) || isContextOverflow(err);
+
 /** 把「一段文字 + 若干张图」拼成 OpenAI 兼容的多模态 content */
 export function buildContent(user, images) {
-  const imgs = (images || []).filter(Boolean);
-  if (!imgs.length) return user;
+  // 这里是所有请求的唯一出口，在这里兜底裁一次，任何调用点都不可能发出超限的请求
+  const { used } = packImages(images);
+  if (!used.length) return user;
   return [
     { type: 'text', text: user },
-    ...imgs.map((im) => ({
-      type: 'image_url',
-      image_url: { url: typeof im === 'string' ? im : im.dataUrl || im.url || '' },
-    })),
+    ...used.map((im) => ({ type: 'image_url', image_url: { url: urlOf(im) } })),
   ];
 }
 
@@ -143,35 +225,53 @@ export async function complete(
   cfg,
   { system, user, images = null, maxTokens = 4096, temperature = 0.3, json = false, signal },
 ) {
-  const hasImages = Array.isArray(images) && images.length > 0;
-  // 带图时必须换成视觉模型 —— 配置的那个（比如 deepseek-v4-pro）根本不认图片
-  const model = hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model;
-
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
-  messages.push({ role: 'user', content: buildContent(user, images) });
 
-  const body = { messages, max_tokens: maxTokens, temperature, stream: false };
-  if (json) body.response_format = { type: 'json_object' };
+  const spec = (imgs) => {
+    const hasImages = Array.isArray(imgs) && imgs.length > 0;
+    const body = {
+      messages: [...messages, { role: 'user', content: buildContent(user, imgs) }],
+      max_tokens: maxTokens,
+      temperature,
+      stream: false,
+    };
+    if (json) body.response_format = { type: 'json_object' };
+    // 带图时必须换成视觉模型 —— 配置的那个（比如 deepseek-v4-pro）根本不认图片
+    return { body, model: hasImages ? cfg.visionModel || 'deepseek-flash' : cfg.model };
+  };
 
-  const read = async (b) => {
-    const res = await request(cfg, b, { signal, model });
+  const read = async ({ body, model }) => {
+    const res = await request(cfg, body, { signal, model });
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content ?? '';
     return { content, usage: data?.usage || null };
   };
 
-  try {
-    return await read(body);
-  } catch (err) {
-    // 有些第三方 OpenAI 兼容接口不支持 response_format，降级重试一次（提示词里已经要求输出 JSON）
-    const unsupported = err?.status === 400 || err?.status === 404 || err?.status === 422;
-    if (json && unsupported) {
-      const fallback = { ...body };
-      delete fallback.response_format;
-      return await read(fallback);
+  let imgs = images;
+  for (let attempt = 0; ; attempt++) {
+    const cur = spec(imgs);
+    try {
+      return await read(cur);
+    } catch (err) {
+      // 请求体太大（网关 413）或上下文塞不下：减半图片重试，而不是让整节直接失败。
+      // 对面网关的上限、模型的上下文我们都没法预知，所以宁可自己一步步退让。
+      if (shouldShrinkImages(err) && Array.isArray(imgs) && imgs.length > 1 && attempt < 3) {
+        const next = Math.max(1, Math.floor(imgs.length / 2));
+        const why = isPayloadTooLarge(err) ? '请求体过大' : '上下文超限';
+        console.warn(`[vision] ${why}（带了 ${imgs.length} 张图），降到 ${next} 张重试`);
+        imgs = sampleEven(imgs, next);
+        continue;
+      }
+      // 有些第三方 OpenAI 兼容接口不支持 response_format，降级重试一次（提示词里已经要求输出 JSON）
+      const unsupported = err?.status === 400 || err?.status === 404 || err?.status === 422;
+      if (json && unsupported && cur.body.response_format) {
+        const fallback = { ...cur, body: { ...cur.body } };
+        delete fallback.body.response_format;
+        return await read(fallback);
+      }
+      throw err;
     }
-    throw err;
   }
 }
 

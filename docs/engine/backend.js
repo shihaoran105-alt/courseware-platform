@@ -19,7 +19,7 @@ import {
   rerunStage,
   runFullAnalysis,
 } from './pipeline.js';
-import { complete } from './ai.js';
+import { complete, MAX_IMAGES_PER_REQUEST } from './ai.js';
 import { toMarkdown } from './export.js';
 import { PROVIDERS, DEFAULT_KEY_URL } from './providers.js';
 import { ACCEPT_HINT, buildContext, classify, extractFile, fileToText } from './extract.js';
@@ -634,7 +634,7 @@ export async function api(path, options = {}) {
     const project = await getProject(m[1]);
     if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
     const s = await projectPageStats(project);
-    return { ok: true, available: Boolean(window.pdfjsLib), total: s.total, auto: s.auto, all: s.total, files: s.files };
+    return { ok: true, available: Boolean(window.pdfjsLib), total: s.total, auto: s.auto, all: s.total, maxImages: MAX_IMAGES_PER_REQUEST, files: s.files };
   }
 
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/rerun$/))) {
