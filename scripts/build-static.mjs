@@ -45,6 +45,20 @@ for (const f of ['app.js', 'quiz-lab.js', 'icons.js', 'slides.js', 'styles.css',
   log('前端  ' + f);
 }
 
+// PWA：清单 + Service Worker + 图标 —— 「装到手机桌面」靠这三样。
+// 清单和图标两边共用，Service Worker 也是同一份（缓存策略与部署方式无关）。
+for (const f of ['manifest.webmanifest', 'sw.js']) {
+  copy(path.join(ROOT, 'public', f), path.join(OUT, f));
+  log('PWA   ' + f);
+}
+{
+  const srcDir = path.join(ROOT, 'public/icons');
+  ensure(path.join(OUT, 'icons'));
+  const names = fs.readdirSync(srcDir);
+  for (const f of names) copy(path.join(srcDir, f), path.join(OUT, 'icons', f));
+  log('PWA   icons/（' + names.length + ' 个图标）');
+}
+
 // ---------- 2. 智能层（从 server/ 编译） ----------
 compileModule(path.join(ROOT, 'server/ai/prompts.mjs'), path.join(OUT, 'engine/prompts.js'));
 compileModule(path.join(ROOT, 'server/ai/client.mjs'), path.join(OUT, 'engine/ai.js'));

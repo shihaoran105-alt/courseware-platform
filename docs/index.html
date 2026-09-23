@@ -8,6 +8,14 @@
 <meta name="theme-color" content="#f5f6f8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+<!-- iOS 装到桌面后：全屏运行、状态栏跟主题走、标题用短名 -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="课件讲解">
+<meta name="application-name" content="课件讲解平台">
+<meta name="format-detection" content="telephone=no">
 <script>
   /* 主题必须在样式生效之前定下来，否则深色用户会先看到一下白屏 */
   try {
@@ -38,6 +46,7 @@
       </div>
     </div>
     <div class="spacer"></div>
+    <button class="theme-btn install-btn" id="installBtn" title="安装到手机桌面" hidden></button>
     <button class="theme-btn" id="themeBtn" title="切换深色 / 浅色"></button>
     <button class="chip lang-chip" id="langChip" title="切换语言"></button>
     <span class="chip" id="modelChip">模型加载中</span>
@@ -126,5 +135,14 @@
 <script src="slides.js"></script>
 <script src="app.js"></script>
 <script src="quiz-lab.js"></script>
+<script>
+  /* 注册 Service Worker：装到桌面 + 断网也能进界面。
+     没有 SW 也不影响使用，所以失败就静默跳过。 */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function () {});
+    });
+  }
+</script>
 </body>
 </html>

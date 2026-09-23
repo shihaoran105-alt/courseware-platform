@@ -1486,6 +1486,8 @@ function renderSidebar() {
   }
   const unpackBtn = $('#unpackBtn');
   if (unpackBtn) unpackBtn.innerHTML = icon('upload', 13) + '导入';
+  const installBtn = $('#installBtn');
+  if (installBtn && !installBtn.innerHTML) installBtn.innerHTML = icon('download', 15);
   $('#dropzone').style.display = mine ? '' : 'none';
   $('#newProjectBtn').title = mine ? '新建一个课件项目' : '回到自己的项目空间';
 
@@ -2984,6 +2986,103 @@ function findBlock(location) {
   return nonSlide.find(isCourseware) || nonSlide[0] || candidates.find(isCourseware) || candidates[0];
 }
 
+/* ------------------------- 装到手机桌面（PWA） ------------------------- */
+
+/**
+ * 为什么这么做：
+ *   安卓（Chrome / Edge / 三星浏览器）支持 `beforeinstallprompt`，
+ *   可以真的「一键安装」—— 点一下系统就弹安装框，装完桌面就有图标。
+ *   iOS 的 Safari 故意不提供这个事件，只能走「分享 → 添加到主屏幕」，
+ *   所以那边给一张带图示的说明，而不是假装能一键装。
+ */
+const INSTALL = { deferred: null, standalone: false };
+
+function isStandalone() {
+  return (
+    window.matchMedia?.('(display-mode: standalone)')?.matches ||
+    window.matchMedia?.('(display-mode: fullscreen)')?.matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function isIOS() {
+  const ua = navigator.userAgent || '';
+  // iPadOS 13+ 的 UA 伪装成 Mac，用触摸点数补判
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function syncInstallBtn() {
+  const btn = $('#installBtn');
+  if (!btn) return;
+  // 已经装过了就不用再提示
+  if (isStandalone()) {
+    btn.hidden = true;
+    return;
+  }
+  // 安卓：系统给了安装事件才显示（说明这个浏览器真的能装）
+  if (INSTALL.deferred) {
+    btn.hidden = false;
+    btn.title = '安装到手机桌面';
+    return;
+  }
+  // iOS：没有安装事件，但确实能装，给说明
+  btn.hidden = !isIOS();
+  btn.title = '添加到主屏幕';
+}
+
+async function installApp() {
+  // 安卓：调起系统的安装框
+  if (INSTALL.deferred) {
+    const ev = INSTALL.deferred;
+    INSTALL.deferred = null;
+    try {
+      ev.prompt();
+      const res = await ev.userChoice;
+      if (res?.outcome === 'accepted') toast('已开始安装，装好后桌面就有图标了');
+      else toast('已取消安装，随时可以再点右上角安装');
+    } catch {
+      toast('这个浏览器没能弹出安装框，可以手动从菜单里「安装应用」', 'err');
+    }
+    syncInstallBtn();
+    return;
+  }
+  showIosInstallHelp();
+}
+
+/** iOS 的「添加到主屏幕」步骤图。只能这么装，所以说清楚。 */
+function showIosInstallHelp() {
+  openModal(
+    `<h3>${icon('download', 15)} 添加到手机桌面</h3>
+     <p style="color:var(--ink-2);font-size:13.5px;line-height:1.8;margin:0 0 14px">
+       iPhone / iPad 上要装到桌面，需要走 Safari 的分享菜单（这是系统限制，所有网页都一样）：
+     </p>
+     <ol class="ios-steps">
+       <li><span class="ios-n">1</span><div>用 <b>Safari</b> 打开这个页面（微信 / QQ 内置浏览器不行，右上角「⋯」→ 用 Safari 打开）</div></li>
+       <li><span class="ios-n">2</span><div>点屏幕<b>底部中间</b>的分享按钮 <span class="ios-share">${icon('upload', 13)}</span></div></li>
+       <li><span class="ios-n">3</span><div>在弹出菜单里往下找到 <b>「添加到主屏幕」</b>，点它</div></li>
+       <li><span class="ios-n">4</span><div>右上角点 <b>「添加」</b> —— 桌面就会出现图标，点开是全屏的，和 App 一样</div></li>
+     </ol>
+     <div class="modal-actions"><button class="btn primary" data-close>知道了</button></div>`,
+  );
+}
+
+function wireInstall() {
+  INSTALL.standalone = isStandalone();
+  window.addEventListener('beforeinstallprompt', (e) => {
+    // 拦下系统默认的小横幅，改成我们自己的按钮，位置更明确
+    e.preventDefault();
+    INSTALL.deferred = e;
+    syncInstallBtn();
+  });
+  window.addEventListener('appinstalled', () => {
+    INSTALL.deferred = null;
+    syncInstallBtn();
+    toast('已装到桌面，以后点图标就能直接打开');
+  });
+  $('#installBtn')?.addEventListener('click', installApp);
+  syncInstallBtn();
+}
+
 /* ---------------------- 项目 / 项目组的导出与导入 ---------------------- */
 
 /** 一个文件带走整个项目（含课件原件、生成的内容、做题记录、对话） */
@@ -3137,12 +3236,36 @@ function selectNarrPage(i, { focus } = {}) {
   }
 }
 
+/** 展开 / 收起。收起时整块向右滑出屏幕，只留右上角一个小把手可以再叫回来。 */
 function expandPageChat(open) {
   state.pageChat.open = open;
-  $('#pageChat')?.classList.toggle('collapsed', !open);
+  const panel = $('#pageChat');
+  const handle = $('#pcHandle');
   const btn = $('#pcToggle');
   if (btn) btn.innerHTML = icon(open ? 'down' : 'chat', 13);
-  if (open) setTimeout(() => $('#pcInput')?.focus(), 60);
+
+  if (open) {
+    // 先把它摆回屏幕外，再在下一帧滑进来，才有「滑入」的动感
+    if (panel) {
+      panel.hidden = false;
+      panel.classList.remove('collapsed', 'sliding-out');
+      panel.style.transform = 'translateX(calc(100% + 32px))';
+      panel.style.opacity = '0';
+      requestAnimationFrame(() => {
+        panel.style.transform = '';
+        panel.style.opacity = '';
+      });
+    }
+    if (handle) handle.hidden = true;
+    setTimeout(() => $('#pcInput')?.focus(), 220);
+  } else {
+    if (handle) handle.hidden = false;
+    if (panel) {
+      panel.classList.add('collapsed', 'sliding-out');
+      panel.style.transform = '';
+      panel.style.opacity = '';
+    }
+  }
 }
 
 function pageChatMsg(m) {
@@ -3156,7 +3279,11 @@ function renderPageChat() {
   const s = narrSegment();
   const msgs = arr(state.project?.pageChat);
   const open = state.pageChat.open !== false;
+  state.pageChat.open = open;
   return `
+  <button class="pc-handle" id="pcHandle" ${open ? 'hidden' : ''} title="展开「就这一页提问」">
+    ${icon('chat', 13)}<span>就这一页提问</span>
+  </button>
   <div class="page-chat ${open ? '' : 'collapsed'}" id="pageChat">
     <div class="pc-head">
       <span class="pc-dot"></span>
@@ -3185,6 +3312,7 @@ function wirePageChat() {
   const panel = $('#pageChat');
   if (!panel) return;
   $('#pcToggle')?.addEventListener('click', () => expandPageChat(panel.classList.contains('collapsed')));
+  $('#pcHandle')?.addEventListener('click', () => expandPageChat(true));
   $('#pcClear')?.addEventListener('click', async () => {
     const ok = await confirmBox({ title: '清空这一栏的对话？', body: '不会影响右侧 AI 咨询，也不会动生成好的内容。', okText: '清空' });
     if (!ok) return;
@@ -4194,6 +4322,7 @@ function wireStaticEvents() {
   });
   $('#themeBtn').addEventListener('click', toggleTheme);
   applyTheme(currentTheme());
+  wireInstall();
 
   // 手机端：侧栏是抽屉，点左上角按钮滑出，点遮罩或选中项目后收起
   const closeNav = () => $('.app')?.classList.remove('nav-open');

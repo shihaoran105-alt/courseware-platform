@@ -1,0 +1,41 @@
+{
+  "name": "课件讲解平台",
+  "short_name": "课件讲解",
+  "description": "上传课件，自动分析内容、讲透事例、给出学习规划，并支持逐页讲解、做题与做 Lab。手机、平板、电脑都能装到桌面当 App 用。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "id": "courseware-platform",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "any",
+  "background_color": "#f5f6f8",
+  "theme_color": "#2f4b7c",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "课件分析",
+      "short_name": "分析",
+      "url": "./#overview",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "逐页讲解",
+      "short_name": "讲解",
+      "url": "./#narration",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "思维导图",
+      "short_name": "导图",
+      "url": "./#mindmap",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

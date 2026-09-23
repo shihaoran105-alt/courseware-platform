@@ -2022,6 +2022,33 @@ ul.clean li::marker { color: var(--ink-4); }
   background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg); overflow: hidden;
   display: flex; flex-direction: column;
+  /* 收起时向右滑出屏幕，而不是原地消失 */
+  transition: transform .34s cubic-bezier(.4, 0, .2, 1), opacity .26s ease;
+  will-change: transform, opacity;
+}
+/* 已经滑出去之后就别再占位、也不吃掉点击 */
+.page-chat.collapsed {
+  transform: translateX(calc(100% + 32px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 收起之后留在右上角的小把手，点它把面板叫回来 */
+.pc-handle {
+  position: absolute; right: 16px; top: 58px; z-index: 31;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 999px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--brand-line);
+  color: var(--brand); font-size: 12.5px; font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+  animation: pcHandleIn .28s cubic-bezier(.2, .9, .3, 1.1);
+}
+.pc-handle:hover { background: var(--brand-soft); transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+.pc-handle[hidden] { display: none; }
+@keyframes pcHandleIn {
+  from { opacity: 0; transform: translateY(-8px) scale(.92); }
+  to { opacity: 1; transform: none; }
 }
 /* 面板浮在内容上方，给正文留出等高的空白，别把最后几页卡片盖住 */
 .tab-body:has(.page-chat:not(.collapsed)) { padding-bottom: 372px; }
@@ -2061,6 +2088,7 @@ ul.clean li::marker { color: var(--ink-4); }
 /* 手机上：铺在底部，和内容同宽 */
 @media (max-width: 860px) {
   .page-chat { left: 10px; right: 10px; bottom: 10px; width: auto; }
+  .pc-handle { right: 10px; top: 54px; padding: 6px 10px; font-size: 12px; }
   .pc-msgs { max-height: 34vh; }
   .tab-body:has(.page-chat:not(.collapsed)) { padding-bottom: 58vh; }
   .tab-body:has(.page-chat.collapsed) { padding-bottom: 84px; }
@@ -2136,3 +2164,23 @@ ul.clean li::marker { color: var(--ink-4); }
 .ts-loc { flex-shrink: 0; font-size: 11px; color: #7fb8d8; font-variant-numeric: tabular-nums; }
 .ts-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-item.cur .ts-title { font-weight: 600; }
+
+/* ==========================================================================
+   装到手机桌面（PWA）
+   ========================================================================== */
+.install-btn { color: var(--brand); border-color: var(--brand-line); background: var(--brand-soft); }
+.install-btn:hover { color: var(--brand-ink); border-color: var(--brand); }
+.install-btn[hidden] { display: none; }
+
+/* iOS 的「添加到主屏幕」步骤 */
+.ios-steps { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 11px; }
+.ios-steps li { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.75; color: var(--ink-2); }
+.ios-n {
+  flex-shrink: 0; width: 21px; height: 21px; border-radius: 50%;
+  background: var(--brand-soft); color: var(--brand); border: 1px solid var(--brand-line);
+  font-size: 11.5px; font-weight: 700; display: grid; place-items: center; margin-top: 1px;
+}
+.ios-share {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; vertical-align: -4px;
+  border: 1px solid var(--brand-line); border-radius: 5px; background: var(--brand-soft); color: var(--brand);
+}
