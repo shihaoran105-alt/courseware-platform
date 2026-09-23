@@ -24,6 +24,7 @@ import { normalizeStages } from './stages.mjs';
 import { chromeState, rasterizePdf, pageStats, selectPages } from './render-pages.mjs';
 import { readModeOf, READ_MODE_LABEL } from './page-select.mjs';
 import { isScannedDoc, isBlankPageText, ocrPages, applyOcrToBlocks } from './ocr.mjs';
+import { BUNDLE_EXT, packProjects, parseBundle, materializeProject, writeMedia } from './transfer.mjs';
 import {
   MEDIA_DIR,
   canAccess,
@@ -73,7 +74,21 @@ import { classifyRole, isDocKind, isValidRole, matchSolution, ROLE_CATALOG, role
 const app = express();
 app.disable('x-powered-by');
 if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
-app.use(express.json({ limit: '2mb' }));
+// 普通接口的 JSON body 很小；导入接口要收内嵌了课件原件的 .cwpack，可能上百 MB，
+// 所以把它排除在全局解析器之外，由那条路由自己放宽上限。
+const smallJson = express.json({ limit: '2mb' });
+app.use((req, res, next) => {
+  if (req.path === '/api/import') return next();
+  return smallJson(req, res, next);
+});
+// body 超过上限时给个能看懂的错误，而不是 500
+app.use((err, _req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    res.status(413).json({ error: '请求体太大，服务器拒绝了。导入文件不要超过 512MB。' });
+    return;
+  }
+  next(err);
+});
 
 // 基础安全响应头
 app.use((_req, res, next) => {
@@ -1418,8 +1433,10 @@ app.post('/api/projects/:id/ask', async (req, res) => {
     if (!res.writableEnded) controller.abort();
   });
 
-  project.dockChat = project.dockChat || [];
-  const history = project.dockChat.slice(-10);
+  // 逐页讲解的左下角问答走单独一条对话，不和右侧 AI 咨询混在一起
+  const channel = req.body?.channel === 'page' ? 'pageChat' : 'dockChat';
+  project[channel] = project[channel] || [];
+  const history = project[channel].slice(-10);
   let answer = '';
   try {
     const text = await dockAsk({
@@ -1438,14 +1455,14 @@ app.post('/api/projects/:id/ask', async (req, res) => {
     answer = text || answer;
     if (!answer) throw new Error('模型没有返回内容，请重试');
 
-    project.dockChat.push({
+    project[channel].push({
       role: 'user',
       content: question,
       attachments,
       at: new Date().toISOString(),
     });
-    project.dockChat.push({ role: 'assistant', content: answer, at: new Date().toISOString() });
-    project.dockChat = project.dockChat.slice(-80);
+    project[channel].push({ role: 'assistant', content: answer, at: new Date().toISOString() });
+    project[channel] = project[channel].slice(-80);
     persist(project);
     stream.send({ type: 'done' });
   } catch (err) {
@@ -1459,9 +1476,110 @@ app.post('/api/projects/:id/ask', async (req, res) => {
 app.delete('/api/projects/:id/ask', (req, res) => {
   const project = editableProjectOr404(req, res);
   if (!project) return;
-  project.dockChat = [];
+  const channel = String(req.query?.channel || '') === 'page' ? 'pageChat' : 'dockChat';
+  project[channel] = [];
   persist(project);
-  res.json({ ok: true, dockChat: [] });
+  res.json({ ok: true, [channel]: [] });
+});
+
+/* ------------------------- 导出 / 导入（单个文件） ------------------------- */
+
+/** 一个文件带走整个项目：课件、生成的内容、做题记录、对话，全都内嵌 */
+function sendBundle(res, projects, filename, groupOf) {
+  const bundle = packProjects(projects, { version: readVersion().version, groupOf });
+  const body = JSON.stringify(bundle);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${encodeURIComponent(filename)}${BUNDLE_EXT}"`,
+  );
+  res.setHeader('Content-Length', Buffer.byteLength(body));
+  res.end(body);
+}
+
+app.get('/api/projects/:id/export.bundle', (req, res) => {
+  const project = readableProjectOr404(req, res);
+  if (!project) return;
+  sendBundle(res, [project], project.name || 'project', () => null);
+});
+
+app.get('/api/groups/:id/export.bundle', (req, res) => {
+  const g = listGroups(req.sid).find((x) => x.id === req.params.id);
+  if (!g) {
+    res.status(404).json({ error: '项目组不存在' });
+    return;
+  }
+  const projects = listProjects(req.sid).filter((p) => p.groupId === g.id && p.owner === req.sid);
+  if (!projects.length) {
+    res.status(400).json({ error: '这个组里还没有项目' });
+    return;
+  }
+  sendBundle(res, projects, g.name || 'group', () => g);
+});
+
+/**
+ * 导入一个 .cwpack。
+ * 请求体可能很大（内嵌了课件原件），所以这条路由单独放宽体积上限。
+ */
+app.post('/api/import', express.json({ limit: '512mb' }), async (req, res) => {
+  if (!rateLimitOr429(req, res, 'upload')) return;
+  let parsed;
+  try {
+    parsed = parseBundle(req.body);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  // 组名对不上就新建；同名就复用，避免导两次多出一堆同名组
+  const existing = listGroups(req.sid);
+  const groupIdOf = new Map();
+  let madeGroups = 0;
+  for (const g of parsed.groups) {
+    const name = String(g.name || '').trim().slice(0, 60);
+    if (!name) continue;
+    const hit = existing.find((x) => x.name === name);
+    if (hit) {
+      groupIdOf.set(g.ref, hit.id);
+      continue;
+    }
+    try {
+      const created = createGroup(name, req.sid);
+      groupIdOf.set(g.ref, created.id);
+      madeGroups++;
+    } catch {
+      /* 组数满了就退回未分组，不阻断导入 */
+    }
+  }
+
+  const made = [];
+  for (const entry of parsed.projects) {
+    const id = newId('p');
+    try {
+      const project = materializeProject(entry, id, `/media/${id}`);
+      const wrote = writeMedia(entry, id);
+      project.owner = req.sid;
+      project.groupId = groupIdOf.get(entry.groupRef) || '';
+      project.createdAt = new Date().toISOString();
+      project.updatedAt = project.createdAt;
+      // 预览 PDF 必须真的写进去了，否则「课件原文」会是一堆空白
+      project.files = (project.files || []).map((f) => ({
+        ...f,
+        previewNote: f.previewPdf && !wrote ? '导入时未带上预览 PDF，页面截图不可用' : f.previewNote || '',
+      }));
+      persist(project);
+      made.push({ id, name: project.name, files: project.files.length });
+    } catch (err) {
+      /* 单个项目失败不影响其余 */
+      console.warn('[import] 跳过：', err.message);
+    }
+  }
+
+  if (!made.length) {
+    res.status(400).json({ error: '没有成功导入任何项目' });
+    return;
+  }
+  res.json({ ok: true, projects: made, groups: madeGroups, from: parsed.appVersion || '' });
 });
 
 /* -------------------------------- 导出 -------------------------------- */

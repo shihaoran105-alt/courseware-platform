@@ -18,6 +18,7 @@ import {
   NARRATION_SYSTEM,
   QUIZ_SYSTEM,
   SUMMARY_SYSTEM,
+  MINDMAP_SYSTEM,
   TRANSLATE_SYSTEM,
   alignUser,
   analyzeUser,
@@ -32,6 +33,7 @@ import {
   narrationUser,
   quizUser,
   summaryUser,
+  mindmapUser,
   translateUser,
 } from './prompts.js';
 
@@ -223,6 +225,7 @@ export async function runFullAnalysis({
     examples: null,
     guide: null,
     narration: null,
+    mindmap: null,
     quiz: null,
     lab: null,
     errors: [],
@@ -312,6 +315,22 @@ export async function runFullAnalysis({
           images: imgsFor(packedPages()),
           user: withPages(summaryUser(context, summary), packedPages()),
           maxTokens: 8000,
+          signal,
+        });
+        addUsage(usage);
+        return data;
+      },
+    },
+    {
+      key: 'mindmap',
+      label: '画思维导图',
+      weight: 12,
+      run: async () => {
+        const { data, usage } = await completeJSON(cfg, {
+          system: MINDMAP_SYSTEM,
+          images: imgsFor(packedPages()),
+          user: withPages(mindmapUser(context, summary), packedPages()),
+          maxTokens: 4000,
           signal,
         });
         addUsage(usage);
@@ -517,6 +536,16 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
         images: imgsFor(packedPages()),
         user: withPages(labUser(context, summary), packedPages()),
         maxTokens: 8000,
+        signal,
+      });
+      return data;
+    }
+    case 'mindmap': {
+      const { data } = await completeJSON(cfg, {
+        system: MINDMAP_SYSTEM,
+        images: imgsFor(packedPages()),
+        user: withPages(mindmapUser(context, summary), packedPages()),
+        maxTokens: 4000,
         signal,
       });
       return data;

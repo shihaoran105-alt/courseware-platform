@@ -2,9 +2,26 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>课件讲解平台</title>
 <meta name="description" content="上传课件，自动分析内容、讲解事例、生成教学方案，并支持在线做题与做 Lab。">
+<meta name="theme-color" content="#f5f6f8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<script>
+  /* 主题必须在样式生效之前定下来，否则深色用户会先看到一下白屏 */
+  try {
+    var t = localStorage.getItem('cw_theme');
+    if (t !== 'dark' && t !== 'light') {
+      t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.dataset.theme = t;
+    if (t === 'dark') {
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', '#0e1218');
+    }
+  } catch (e) { /* 无痕模式下 localStorage 可能不可用，忽略 */ }
+</script>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%232f4b7c'/><path d='M20 8 12 4.5 4 8l8 3.5Z' fill='none' stroke='white' stroke-width='1.6' stroke-linejoin='round'/><path d='M7 9.8v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V9.8' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round'/></svg>">
 </head>
@@ -12,6 +29,7 @@
 
 <div class="app">
   <header class="topbar">
+    <button class="nav-btn" id="navBtn" title="项目与文件"></button>
     <div class="brand">
       <span class="logo" id="brandLogo"></span>
       <div>
@@ -20,6 +38,7 @@
       </div>
     </div>
     <div class="spacer"></div>
+    <button class="theme-btn" id="themeBtn" title="切换深色 / 浅色"></button>
     <button class="chip lang-chip" id="langChip" title="切换语言"></button>
     <span class="chip" id="modelChip">模型加载中</span>
     <button class="chip version-chip" id="versionChip" title="查看更新内容"></button>
@@ -53,6 +72,11 @@
       <div class="sidebar-foot">
         <button class="btn primary block" id="analyzeBtn" disabled></button>
         <button class="btn block" id="exportBtn" disabled></button>
+        <div class="foot-row">
+          <button class="btn block" id="packBtn" title="把整个项目导出成一个文件，可以在别的平台上导入"></button>
+          <button class="btn block" id="unpackBtn" title="从导出文件里导入项目或项目组"></button>
+        </div>
+        <input type="file" id="importInput" accept=".cwpack,.json,application/json" hidden>
       </div>
     </aside>
 
@@ -82,6 +106,7 @@
       </div>
     </aside>
   </div>
+  <div class="nav-scrim" id="navScrim"></div>
 </div>
 
 <div id="presenterRoot"></div>

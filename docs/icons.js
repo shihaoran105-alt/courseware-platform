@@ -5,6 +5,13 @@
 
 const PATHS = {
   chart: '<path d="M3 3v18h18"/><path d="M7 15v3"/><path d="M12 10v8"/><path d="M17 6v12"/>',
+  // 主题切换
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2"/><path d="M12 19.3v2.2"/><path d="M4.2 4.2 5.8 5.8"/><path d="M18.2 18.2l1.6 1.6"/><path d="M2.5 12h2.2"/><path d="M19.3 12h2.2"/><path d="M4.2 19.8 5.8 18.2"/><path d="M18.2 5.8l1.6-1.6"/>',
+  moon: '<path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"/>',
+  // 思维导图 / 导出导入
+  mindmap: '<circle cx="5" cy="12" r="2.4"/><circle cx="19" cy="5.5" r="2.4"/><circle cx="19" cy="12" r="2.4"/><circle cx="19" cy="18.5" r="2.4"/><path d="M7.4 12h3.1a2 2 0 0 0 2-2V7.5a2 2 0 0 1 2-2h2.1"/><path d="M7.4 12h6.6"/><path d="M7.4 12h3.1a2 2 0 0 1 2 2v2.5a2 2 0 0 0 2 2h2.1"/>',
+  package: '<path d="M21 8.5v7a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4a2 2 0 0 1-1-1.7v-7a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4a2 2 0 0 1 1 1.7Z"/><path d="m3.3 7.4 8.7 5 8.7-5"/><path d="M12 21.5v-9"/>',
+  expand: '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>',
   bulb: '<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .9 1.6l.1.6h5.2l.1-.6c.1-.6.4-1.2.9-1.6A6 6 0 0 0 12 3Z"/>',
   compass:
     '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5Z"/>',

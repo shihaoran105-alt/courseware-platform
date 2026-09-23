@@ -9,7 +9,7 @@
  */
 import { classifyRole } from './roles.mjs';
 
-/** 六个模式。key 和 pipeline 里的 stage key 一一对应 */
+/** 八个模式。key 和 pipeline 里的 stage key 一一对应 */
 export const STAGE_CATALOG = [
   {
     key: 'analysis',
@@ -54,6 +54,15 @@ export const STAGE_CATALOG = [
     desc: '不按课件结构走，把里面的知识重新梳理一遍：表格 + 思维导图讲透，目标是让没看过课件的人也能学会。',
     descEn: 'Ignores the courseware structure and re-organises the knowledge itself — tables and mind maps, written to teach someone who never saw the deck.',
     tab: 'summary',
+    basedOn: ['courseware', 'lab', 'exercise', 'other'],
+  },
+  {
+    key: 'mindmap',
+    label: '思维导图',
+    labelEn: 'Mind map',
+    desc: '把材料画成一张思维导图：节点尽量短，靠连线表达逻辑关系，文字只作提示。',
+    descEn: 'Draws the material as a mind map — very short node labels, logic carried by the links rather than prose.',
+    tab: 'mindmap',
     basedOn: ['courseware', 'lab', 'exercise', 'other'],
   },
   {
@@ -107,7 +116,8 @@ export function recommendStages(files = []) {
   }
   if (has('courseware') || has('lab') || has('exercise')) {
     picked.add('summary');
-    why.push('不管什么材料 → 都可以重新梳理一遍知识点（表格 + 思维导图）');
+    picked.add('mindmap');
+    why.push('不管什么材料 → 都可以重新梳理一遍知识点（表格 + 思维导图），并单独画一张思维导图');
   }
   if (has('solution')) {
     // 答案册本身不产出模式，但它是讲解和出题的依据，单独说明一下

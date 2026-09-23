@@ -38,6 +38,25 @@
   --teal-soft: #edf6f6;
   --teal-line: #b6dcdc;
 
+  /* 金色：标准答案 / 背景补充这类「权威依据」 */
+  --gold: #96690f;
+  --gold-soft: #fdf6e3;
+  --gold-line: #edd9a3;
+  /* 粉色：上课录像 */
+  --pink: #9d2b62;
+  --pink-soft: #fdf1f6;
+  --pink-line: #f3c9dc;
+  /* 中性小标签 */
+  --chip: #4a5b7c;
+  --chip-soft: #eef2fb;
+  --chip-line: #d5deef;
+  /* 奶油底提示块 */
+  --cream: #7a5508;
+  --cream-soft: #fffaf0;
+  --cream-line: #f0e0bd;
+  /* 明确就是「底色」的地方（幻灯片底、行内标签底） */
+  --surface-solid: #ffffff;
+
   --radius-sm: 7px;
   --radius: 10px;
   --radius-lg: 14px;
@@ -129,10 +148,10 @@ a:hover { text-decoration: underline; }
 }
 .version-chip:hover { border-color: var(--ink-4); color: var(--ink); }
 .version-chip.stale {
-  background: #fdecec; border-color: #f0b4b4; color: #c0392b;
+  background: var(--danger-soft); border-color: var(--danger-line); color: var(--danger);
   cursor: pointer; animation: verPulse 1.8s ease-in-out infinite;
 }
-.version-chip.stale:hover { background: #fbdcdc; }
+.version-chip.stale:hover { filter: brightness(0.97); }
 @keyframes verPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(192, 57, 43, .30); }
   50% { box-shadow: 0 0 0 5px rgba(192, 57, 43, 0); }
@@ -245,7 +264,7 @@ a:hover { text-decoration: underline; }
 .pm { font-size: 9.5px; padding: 1px 5px; border-radius: 4px; background: var(--surface-3); color: var(--ink-4); }
 .pm.ok { background: var(--ok-soft, #e8f5ee); color: #1f7a4d; }
 .pm.lab { background: var(--teal-soft); color: var(--teal); }
-.pm.sol { background: #fdf6e3; color: #96690f; }
+.pm.sol { background: var(--gold-soft); color: var(--gold); }
 .proj-empty { font-size: 11.5px; color: var(--ink-4); padding: 5px 9px; }
 
 /* ------------------------------ 右侧 AI 咨询 ------------------------------ */
@@ -463,6 +482,19 @@ a:hover { text-decoration: underline; }
 .tab:hover .ic { opacity: 0.85; }
 .tab.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
 .tab.active .ic { opacity: 1; }
+
+/* 已经生成好的排左边、颜色深；还没生成的排右边、颜色浅 */
+.tab.ready { color: var(--ink); font-weight: 570; }
+.tab.ready:hover { color: var(--brand); }
+.tab.blank { color: var(--ink-4); font-weight: 480; }
+.tab.blank:hover { color: var(--ink-2); }
+.tab:disabled { cursor: not-allowed; }
+/* 分组之间来一道极淡的竖线，一眼看出「左边是有的、右边还没做」 */
+.tab.ready + .tab.blank { position: relative; }
+.tab.ready + .tab.blank::before {
+  content: ''; position: absolute; left: -7px; top: 14px; bottom: 14px;
+  width: 1px; background: var(--line-2);
+}
 .tabs .spacer { flex: 1; }
 
 .tab-body { flex: 1; overflow-y: auto; padding: 26px 30px 70px; }
@@ -520,7 +552,7 @@ a:hover { text-decoration: underline; }
   background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.16);
   padding: 5px 13px; border-radius: 6px; font-size: 12.5px; color: rgba(255, 255, 255, 0.94);
 }
-.hero .btn.primary { background: #fff; border-color: #fff; color: var(--brand-ink); }
+.hero .btn.primary { background: var(--surface-solid); border-color: var(--surface-solid); color: var(--brand-ink); }
 .hero .btn.primary:hover { background: rgba(255, 255, 255, 0.9); }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
@@ -1088,7 +1120,7 @@ ul.clean li::marker { color: var(--ink-4); }
 .explain-key {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 8px 0 0; padding: 4px 10px; border-radius: 6px;
-  font-size: 12px; color: #7a5508; background: #fdf6e3; border: 1px solid #edd9a3;
+  font-size: 12px; color: var(--gold); background: var(--gold-soft); border: 1px solid var(--gold-line);
 }
 .explain-key b { font-weight: 700; }
 .explain-head-right { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
@@ -1333,7 +1365,7 @@ ul.clean li::marker { color: var(--ink-4); }
   display: block;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
-  background: #fff;
+  background: var(--surface-solid);
 }
 .slide-loading, .slide-missing {
   font-size: 12.5px; color: var(--ink-4); text-align: center; line-height: 1.9;
@@ -1385,9 +1417,9 @@ ul.clean li::marker { color: var(--ink-4); }
 .role-tag.lab { background: var(--teal-soft); color: var(--teal); border: 1px solid var(--teal-line); }
 .role-tag.exercise { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line); }
 .role-tag.courseware { background: var(--brand-soft); color: var(--brand); border: 1px solid var(--brand-line); }
-.role-tag.video { background: #fdf1f6; color: #9d2b62; border: 1px solid #f3c9dc; }
+.role-tag.video { background: var(--pink-soft); color: var(--pink); border: 1px solid var(--pink-line); }
 /* 标准答案：用金色强调它是「权威依据」，不是普通附件 */
-.role-tag.solution { background: #fdf6e3; color: #96690f; border: 1px solid #edd9a3; }
+.role-tag.solution { background: var(--gold-soft); color: var(--gold); border: 1px solid var(--gold-line); }
 .role-tag.other { background: var(--surface-3); color: var(--ink-3); border: 1px solid var(--line); }
 
 /* 类别标签现在可以点：给个明确的可点提示 */
@@ -1399,7 +1431,7 @@ ul.clean li::marker { color: var(--ink-4); }
 .manual-dot {
   display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px;
   font-size: 9.5px; line-height: 15px; vertical-align: 1px;
-  background: #eef2fb; color: #4a5b7c; border: 1px solid #d5deef;
+  background: var(--chip-soft); color: var(--chip); border: 1px solid var(--chip-line);
 }
 
 /* 「这份材料算什么」选择面板 */
@@ -1617,7 +1649,7 @@ ul.clean li::marker { color: var(--ink-4); }
 .sc-detail th, .sc-detail td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
 .sc-bg {
   margin-top: 10px; padding: 8px 11px; border-radius: 7px;
-  background: #fffaf0; border: 1px solid #f0e0bd; color: #7a5508;
+  background: var(--cream-soft); border: 1px solid var(--cream-line); color: var(--cream);
   font-size: 12.5px; line-height: 1.75;
 }
 
@@ -1630,8 +1662,8 @@ ul.clean li::marker { color: var(--ink-4); }
 .sf-pair { font-size: 13.5px; font-weight: 680; color: #a33; margin-bottom: 8px; }
 .sf-line { font-size: 12.5px; line-height: 1.8; color: var(--ink-2); margin-bottom: 5px; display: flex; gap: 7px; }
 .sf-line b {
-  flex-shrink: 0; font-size: 11px; font-weight: 600; color: #a33;
-  background: #fff; border-radius: 4px; padding: 1px 7px; height: 20px; line-height: 18px;
+  flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--danger);
+  background: var(--surface-solid); border-radius: 4px; padding: 1px 7px; height: 20px; line-height: 18px;
 }
 
 /* ---- 学习路径 ---- */
@@ -1750,3 +1782,357 @@ ul.clean li::marker { color: var(--ink-4); }
 .read-cost:empty { display: none; }
 .read-cost b { color: var(--ink); font-weight: 650; }
 .read-cost svg { vertical-align: -1px; color: var(--warn); }
+
+/* ==========================================================================
+   深色模式
+   --------------------------------------------------------------------------
+   全部靠覆盖 :root 上的那套令牌实现，组件样式一行都不用改。
+   逐页讲解（.presenter）本来就是深色的，两种主题下保持一致，刻意不参与切换。
+   ========================================================================== */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 中性色 —— 深色下稍微偏蓝，避免死黑 */
+  --bg: #0e1218;
+  --surface: #161b23;
+  --surface-2: #1a2029;
+  --surface-3: #202632;
+  --line: #262d39;
+  --line-2: #333b4a;
+  --ink: #e9edf4;
+  --ink-2: #b7c0d0;
+  --ink-3: #8b95a7;
+  --ink-4: #6c7587;
+
+  /* 主色：深色底上把蓝调亮，保证对比度 */
+  --brand: #6f9be0;
+  --brand-2: #8bb0ea;
+  --brand-ink: #cfe0f7;
+  --brand-soft: #1a2433;
+  --brand-line: #2e4059;
+
+  --ok: #4fbf94;
+  --ok-soft: #12251e;
+  --ok-line: #235040;
+  --warn: #d9a441;
+  --warn-soft: #272115;
+  --warn-line: #4a3d20;
+  --danger: #f0736a;
+  --danger-soft: #2a1a19;
+  --danger-line: #552e2c;
+  --teal: #4fc4c4;
+  --teal-soft: #122526;
+  --teal-line: #235150;
+
+  --gold: #e0bd7a;
+  --gold-soft: #272115;
+  --gold-line: #4d4126;
+  --pink: #e79ac0;
+  --pink-soft: #271a22;
+  --pink-line: #4e2f40;
+  --chip: #a9b6cf;
+  --chip-soft: #1d2431;
+  --chip-line: #2f3949;
+  --cream: #d9b26a;
+  --cream-soft: #272115;
+  --cream-line: #4a3d20;
+  --surface-solid: #1c222c;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4), 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, .45);
+  --shadow-lg: 0 22px 55px rgba(0, 0, 0, .6);
+}
+
+/* 深色下 markdown 里被 esc 过的代码块、表格线这类要跟着走 */
+[data-theme='dark'] .bubble pre,
+[data-theme='dark'] .dock-bubble pre { background: #0d1117; border-color: var(--line); }
+[data-theme='dark'] img.slide-img { filter: brightness(.94); }
+
+/* 主题切换按钮 */
+.theme-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--ink-3); flex-shrink: 0;
+}
+.theme-btn:hover { color: var(--ink); border-color: var(--line-2); background: var(--surface-3); }
+.theme-btn svg { width: 15px; height: 15px; }
+
+/* ==========================================================================
+   手机 / 平板：安卓、iOS 都能用
+   --------------------------------------------------------------------------
+   桌面是三栏（侧栏 | 主区 | AI 咨询）。窄屏下：
+     · 侧栏变成抽屉，点左上角按钮滑出，点遮罩收起
+     · AI 咨询铺满整屏（它本身有独立的开合状态）
+     · 模式条横向滚动，不再挤压
+   触屏没有 hover，所以凡是「拖拽」才能做的事，界面上都保留了 ＋ 按钮那条路。
+   ========================================================================== */
+
+/* 桌面下藏掉手机专用的按钮和遮罩 */
+.nav-btn, .nav-scrim { display: none; }
+
+.nav-btn {
+  align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-3);
+  flex-shrink: 0; margin-right: 4px;
+}
+.nav-btn:hover { color: var(--ink); border-color: var(--line-2); }
+
+@media (max-width: 860px) {
+  .app { grid-template-rows: 54px 1fr; }
+  .topbar { padding: 0 10px; gap: 7px; }
+  .topbar .brand .tag { display: none; }
+  .topbar .brand .name { font-size: 14px; }
+  .topbar .logo { width: 26px; height: 26px; }
+  /* 顶部空间有限，模型名和 Key 状态收起来，设置里还能看到 */
+  #modelChip, #keyChip, .lang-chip { display: none; }
+  .nav-btn { display: inline-flex; }
+
+  .body,
+  .body:has(.ai-dock:not(.collapsed)) { grid-template-columns: 1fr; }
+
+  /* 侧栏：从左边滑出的抽屉。
+     注意要显式写回 display —— 上面有条 1180px 的旧规则会把展开状态下的侧栏
+     整个 display:none 掉，那是给桌面三栏用的，手机上有它抽屉就打不开了。 */
+  .body:has(.ai-dock:not(.collapsed)) .sidebar { display: flex; }
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 60;
+    width: min(86vw, 330px);
+    transform: translateX(-102%);
+    transition: transform .22s ease;
+    box-shadow: var(--shadow-lg);
+    padding-top: env(safe-area-inset-top);
+  }
+  .app.nav-open .sidebar { transform: translateX(0); }
+  .app.nav-open .nav-scrim {
+    display: block; position: fixed; inset: 0; z-index: 55;
+    background: rgba(8, 12, 20, .45);
+  }
+
+  /* 主区铺满，底部给 iOS 的横条留位置 */
+  .main { min-width: 0; }
+  .tab-body { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+
+  /* 模式条：横向滚动，不换行挤压 */
+  .tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs > * { flex: 0 0 auto; }
+
+  /* AI 咨询：窄屏下铺满，而不是挤成一条；收起时完全不占位 */
+  .ai-dock { width: 100%; }
+  .ai-dock.collapsed { display: none; }
+  .body:has(.ai-dock:not(.collapsed)) .main { display: none; }
+  /* 抽屉要在 AI 面板之上 */
+  .sidebar { z-index: 70; }
+
+  /* 触屏上把点按目标做大一点 */
+  .btn.sm { padding: 7px 11px; }
+  .icon-btn { width: 32px; height: 32px; }
+  .tabs button { padding: 8px 12px; }
+
+  /* iOS 上输入框字号小于 16px 会自动放大整页 */
+  input, textarea, select { font-size: 16px; }
+  .dock-compose textarea { font-size: 16px; }
+
+  /* 逐页讲解：两栏改上下 */
+  .presenter-head { flex-wrap: wrap; gap: 8px; }
+  .presenter-head h3 { flex-basis: 100%; order: 3; }
+  .presenter-main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .presenter-col { padding: 18px 16px; }
+  .presenter-foot { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+
+  /* 弹窗铺满，别再留边 */
+  .modal { width: min(100vw - 20px, 720px); max-height: 88vh; }
+}
+
+/* 很窄的手机（iPhone SE 这类） */
+@media (max-width: 480px) {
+  .tab-body { padding: 12px 10px; }
+  .card { padding: 14px 13px; }
+  .hero { padding: 22px 18px; }
+  .hero h1 { font-size: 19px; }
+}
+
+/* 横屏手机：顶部再压一点，把高度让给内容 */
+@media (max-width: 860px) and (orientation: landscape) {
+  .app { grid-template-rows: 46px 1fr; }
+  .topbar .brand { display: none; }
+}
+
+/* ==========================================================================
+   逐页讲解：鼠标移到课件原图上 → 有动感地浮起来、放大一倍
+   --------------------------------------------------------------------------
+   只是把这张图放大浮到上层，页面其它部分完全不动，也不是全屏。
+   变换原点由 JS 按图片在屏幕上的位置设置：靠右就锚右边、靠下就锚下边，
+   于是图总是朝屏幕中间长大，不会被挤出视野。
+   ========================================================================== */
+.presenter .slide-stage { position: relative; }
+.presenter .slide-stage .slide-img {
+  display: block; width: 100%; height: auto; border-radius: 5px;
+  transform-origin: center center;
+  transition: transform .34s cubic-bezier(.16, .84, .24, 1),
+              box-shadow .34s ease, filter .34s ease;
+  will-change: transform;
+  cursor: zoom-in;
+}
+.presenter .slide-stage:hover .slide-img {
+  transform: scale(2);
+  z-index: 80;
+  position: relative;
+  box-shadow: 0 42px 90px rgba(0, 0, 0, .72), 0 0 0 1px rgba(255, 255, 255, .14);
+  filter: brightness(1.06) saturate(1.04);
+}
+/* 放大期间要让祖先允许溢出，否则会被栏位的 overflow 裁掉 */
+.presenter:has(.slide-stage:hover) .presenter-col,
+.presenter:has(.slide-stage:hover) .presenter-main { overflow: visible; }
+/* 放大期间给底部那排翻页控件让路，别被盖住 */
+.presenter .slide-bar { position: relative; z-index: 90; }
+
+/* 触屏没有 hover，用手指点一下放大、再点一下还原 */
+.presenter .slide-stage.zoomed .slide-img {
+  transform: scale(2);
+  z-index: 80;
+  position: relative;
+  box-shadow: 0 42px 90px rgba(0, 0, 0, .72), 0 0 0 1px rgba(255, 255, 255, .14);
+  cursor: zoom-out;
+}
+@media (hover: none) {
+  .presenter .slide-stage:hover .slide-img { transform: none; box-shadow: none; filter: none; }
+  .presenter .slide-stage.zoomed .slide-img { transform: scale(2); }
+  .presenter:has(.slide-stage.zoomed) .presenter-col,
+  .presenter:has(.slide-stage.zoomed) .presenter-main { overflow: visible; }
+}
+
+/* ==========================================================================
+   逐页讲解：左下角「就这一页提问」
+   --------------------------------------------------------------------------
+   锚在主内容区（.main）的左下角，跟着当前页走：翻到别页再问，上下文就换了。
+   ========================================================================== */
+.main { position: relative; }
+
+.narr-card { transition: border-color .18s, background .18s; cursor: pointer; }
+.narr-card.current { border-color: var(--brand); background: var(--brand-soft); }
+.narr-card.current .num { background: var(--brand); color: #fff; }
+
+.page-chat {
+  position: absolute; left: 16px; bottom: 16px; z-index: 30;
+  width: min(420px, calc(100% - 32px));
+  background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+  display: flex; flex-direction: column;
+}
+/* 面板浮在内容上方，给正文留出等高的空白，别把最后几页卡片盖住 */
+.tab-body:has(.page-chat:not(.collapsed)) { padding-bottom: 372px; }
+.page-chat.collapsed .pc-body { display: none; }
+.tab-body:has(.page-chat.collapsed) { padding-bottom: 84px; }
+.pc-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 11px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+}
+.pc-head b { font-size: 12.5px; font-weight: 620; color: var(--ink); }
+.pc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); flex-shrink: 0; }
+.pc-title {
+  font-size: 11.5px; color: var(--ink-4); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 40%;
+}
+.page-chat .spacer { flex: 1; }
+.pc-body { display: flex; flex-direction: column; min-height: 0; }
+.pc-hint { font-size: 11.5px; color: var(--ink-4); padding: 9px 12px 0; line-height: 1.6; }
+.pc-msgs { max-height: 260px; min-height: 78px; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+.pc-empty { font-size: 12px; color: var(--ink-4); line-height: 1.7; padding: 8px 0; }
+.pc-msg { display: flex; }
+.pc-msg.user { justify-content: flex-end; }
+.pc-bubble { font-size: 13px; line-height: 1.75; max-width: 88%; border-radius: 10px; padding: 7px 11px; }
+.pc-msg.user .pc-bubble { background: var(--brand); color: #fff; border-bottom-right-radius: 3px; }
+.pc-msg.ai .pc-bubble { background: var(--surface-2); border: 1px solid var(--line); color: var(--ink); }
+.pc-msg.ai .pc-bubble p { margin: 0 0 7px; }
+.pc-msg.ai .pc-bubble p:last-child { margin-bottom: 0; }
+.pc-compose { display: flex; gap: 7px; align-items: flex-end; padding: 9px 11px 11px; border-top: 1px solid var(--line); }
+.pc-compose textarea {
+  flex: 1; resize: none; border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 7px 9px; font-size: 13px; font-family: inherit; line-height: 1.6;
+  background: var(--surface-2); color: var(--ink); max-height: 120px;
+}
+.pc-compose textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.pc-compose .btn { flex-shrink: 0; }
+
+/* 手机上：铺在底部，和内容同宽 */
+@media (max-width: 860px) {
+  .page-chat { left: 10px; right: 10px; bottom: 10px; width: auto; }
+  .pc-msgs { max-height: 34vh; }
+  .tab-body:has(.page-chat:not(.collapsed)) { padding-bottom: 58vh; }
+  .tab-body:has(.page-chat.collapsed) { padding-bottom: 84px; }
+}
+
+/* 侧栏底部的「导出项目 / 导入」并排两个 */
+.sidebar-foot .foot-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 7px; }
+.sidebar-foot .foot-row .btn { padding: 8px 6px; font-size: 12.5px; }
+
+/* ==========================================================================
+   思维导图模式
+   --------------------------------------------------------------------------
+   节点刻意做得小、字刻意少，关系靠连线表达。配色跟着主题走。
+   ========================================================================== */
+.mm-card h3 { display: flex; align-items: center; gap: 7px; }
+.mm-meta { font-size: 11.5px; font-weight: 500; color: var(--ink-4); margin-left: auto; }
+.mm-canvas {
+  overflow: auto; padding: 6px 2px 2px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+  max-height: 68vh;
+}
+.mm-canvas svg { display: block; }
+
+.mm-link {
+  fill: none; stroke: var(--line-2); stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.mm-link.d1 { stroke: var(--brand-line); stroke-width: 2; }
+.mm-link.d2 { stroke: var(--line-2); stroke-width: 1.4; }
+
+.mm-node rect { fill: var(--surface); stroke: var(--line-2); stroke-width: 1; }
+.mm-node text { font-size: 12.5px; font-weight: 550; fill: var(--ink); }
+
+/* 根节点：实心主色，一眼看到主线 */
+.mm-node.d0 rect { fill: var(--brand); stroke: var(--brand); }
+.mm-node.d0 text { fill: #fff; font-size: 13.5px; font-weight: 650; }
+
+/* 一级分支：主色描边 */
+.mm-node.d1 rect { fill: var(--brand-soft); stroke: var(--brand-line); }
+.mm-node.d1 text { fill: var(--brand-ink); font-weight: 620; }
+
+/* 二级：中性 */
+.mm-node.d2 rect { fill: var(--surface); stroke: var(--line); }
+.mm-node.d2 text { fill: var(--ink-2); font-size: 12px; font-weight: 500; }
+
+/* 深色下把白字和外框调一下，避免刺眼 */
+[data-theme='dark'] .mm-node.d0 text { fill: #0e1218; }
+[data-theme='dark'] .mm-node.d1 text { fill: var(--brand); }
+
+/* ==========================================================================
+   全屏讲解：课件原图下面的「同主题」条
+   ========================================================================== */
+.topic-strip {
+  margin-top: 14px; border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--radius); background: rgba(255, 255, 255, .04);
+  overflow: hidden;
+}
+.ts-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px; font-size: 12px; color: #9aa8c2;
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+.ts-head b { color: #dbe3f0; font-weight: 620; }
+.ts-range { margin-left: auto; font-size: 11px; color: #6b7793; font-variant-numeric: tabular-nums; }
+.ts-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+.ts-item {
+  display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+  padding: 6px 9px; border-radius: 7px; font-size: 12.5px;
+  color: #b9c3d6; border: 1px solid transparent;
+}
+.ts-item:hover { background: rgba(255, 255, 255, .07); color: #e6eaf2; }
+.ts-item.cur { background: rgba(127, 184, 216, .16); border-color: rgba(127, 184, 216, .4); color: #eaf1f8; }
+.ts-loc { flex-shrink: 0; font-size: 11px; color: #7fb8d8; font-variant-numeric: tabular-nums; }
+.ts-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-item.cur .ts-title { font-weight: 600; }

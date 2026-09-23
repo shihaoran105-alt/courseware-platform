@@ -55,6 +55,9 @@ const state = {
   collapsedGroups: new Set(),
   // 右侧 AI 咨询
   dock: { open: true, attachments: [], sending: false },
+  // 逐页讲解左下角的「就这一页提问」：当前页 + 它自己那条对话
+  narrPage: 0,
+  pageChat: { open: true, sending: false },
   // 中英对照的显示方式：both（上下对照）| zh（只看中文）| en（只看英文）
   biView: 'both',
   passLabel: '',
@@ -842,6 +845,7 @@ const TABS = [
   { id: 'guide', label: '学习规划', icon: 'compass' },
   { id: 'narration', label: '逐页讲解', icon: 'mic' },
   { id: 'summary', label: '总结分析', icon: 'layers' },
+  { id: 'mindmap', label: '思维导图', icon: 'mindmap' },
   { id: 'quiz', label: '做题', icon: 'pen' },
   { id: 'lab', label: '做 Lab', icon: 'flask' },
   { id: 'chat', label: '课件问答', icon: 'chat' },
@@ -1305,6 +1309,7 @@ function renderGroups() {
         <span class="group-name" data-gact="rename" data-id="${esc(g.id)}" title="点两下改名">${esc(g.name)}</span>
         <span class="group-count">${list.length}</span>
         <span class="spacer"></span>
+        <button class="icon-btn" data-gact="export" data-id="${esc(g.id)}" title="把整个项目组导出成一个文件">${icon('package', 13)}</button>
         <button class="icon-btn" data-gact="add" data-id="${esc(g.id)}" title="在这个组里新建项目">${icon('plus', 13)}</button>
         <button class="icon-btn danger" data-gact="del" data-id="${esc(g.id)}" title="删除分组（里面的项目会退回未分组，不会被删）">${icon('x', 13)}</button>
       </div>
@@ -1445,7 +1450,8 @@ function wireGroups() {
       if (act.dataset.gact === 'toggle') {
         state.collapsedGroups.has(id) ? state.collapsedGroups.delete(id) : state.collapsedGroups.add(id);
         renderGroups();
-      } else if (act.dataset.gact === 'add') newProjectUI(id);
+      } else if (act.dataset.gact === 'export') exportGroup(id);
+      else if (act.dataset.gact === 'add') newProjectUI(id);
       else if (act.dataset.gact === 'rename') renameGroupUI(id);
       else if (act.dataset.gact === 'del') deleteGroupUI(id);
       return;
@@ -1473,6 +1479,13 @@ function renderSidebar() {
         : icon('play', 14) + '开始讲解分析';
   $('#exportBtn').innerHTML = icon('download', 14) + '导出讲解方案 (.md)';
   $('#exportBtn').disabled = !state.project?.analysis;
+  const packBtn = $('#packBtn');
+  if (packBtn) {
+    packBtn.innerHTML = icon('package', 13) + '导出项目';
+    packBtn.disabled = !state.project?.id;
+  }
+  const unpackBtn = $('#unpackBtn');
+  if (unpackBtn) unpackBtn.innerHTML = icon('upload', 13) + '导入';
   $('#dropzone').style.display = mine ? '' : 'none';
   $('#newProjectBtn').title = mine ? '新建一个课件项目' : '回到自己的项目空间';
 
@@ -1506,11 +1519,33 @@ function renderSidebar() {
     : `<p style="font-size:12.5px;color:var(--text-3);text-align:center;margin:18px 0 0">还没有文件</p>`;
 }
 
+/**
+ * 这个模式现在有没有内容。
+ * 用它来把模式条分成两拨：已经生成好的排左边、颜色深；还没生成的排右边、颜色浅。
+ * 「课件问答」随时能用，算有内容；「结合课件讲解」要看有没有讲过题。
+ */
+function tabHasContent(id) {
+  if (id === 'chat') return true;
+  if (id === 'combine') return Object.keys(state.project?.explain || {}).length > 0;
+  const key = id === 'overview' ? 'analysis' : id;
+  const v = state.project?.analysis?.[key];
+  return Boolean(v && !v.skipped);
+}
+
 function renderTabs() {
   const enabled = state.view === 'done';
-  $('#tabs').innerHTML = TABS.map(
-    (t) => `<button class="tab ${state.tab === t.id ? 'active' : ''}" data-tab="${t.id}" ${enabled ? '' : 'disabled style="opacity:.45"'}>${t.label}</button>`,
-  ).join('');
+  // 稳定排序：有内容的在前，同组内保持 TABS 原本的顺序
+  const ordered = TABS.map((t, i) => ({ t, i, ready: tabHasContent(t.id) })).sort(
+    (a, b) => Number(b.ready) - Number(a.ready) || a.i - b.i,
+  );
+  $('#tabs').innerHTML = ordered
+    .map(
+      ({ t, ready }) =>
+        `<button class="tab ${state.tab === t.id ? 'active' : ''} ${ready ? 'ready' : 'blank'}" data-tab="${t.id}" ${
+          enabled ? '' : 'disabled'
+        }>${t.label}</button>`,
+    )
+    .join('');
   const stale = state.project?.analysisStale && state.project?.analysis;
   $('#tabs').insertAdjacentHTML(
     'beforeend',
@@ -1568,6 +1603,7 @@ function renderStageCurrent() {
   if (state.tab === 'combine') return renderCombine();
   if (state.tab === 'narration') return renderNarration(state.project.analysis?.narration);
   if (state.tab === 'summary') return renderSummary(state.project.analysis?.summary);
+  if (state.tab === 'mindmap') return renderMindmap(state.project.analysis?.mindmap);
   if (state.tab === 'quiz') return renderQuiz(state.project.analysis?.quiz);
   if (state.tab === 'lab') return renderLab(state.project.analysis?.lab);
   return '';
@@ -1812,6 +1848,8 @@ function stageCatalog() {
     { key: 'examples', label: '事例讲解', desc: '把例题、案例拆成题目 → 分步 → 通用方法 → 易错点。' },
     { key: 'guide', label: '学习规划', desc: '给学习者一份学习规划：先学什么、每部分花多久、怎么自测。' },
     { key: 'narration', label: '逐页讲解稿', desc: '每一页写一段可以照着念的讲稿。' },
+    { key: 'summary', label: '总结分析', desc: '抛开课件结构，把知识点重新梳理一遍。' },
+    { key: 'mindmap', label: '思维导图', desc: '画成一张思维导图：节点短、靠连线表达逻辑关系。' },
     { key: 'quiz', label: '练习题', desc: '整理出可以做的题，附答案与解析。' },
     { key: 'lab', label: '做 Lab', desc: '把实验整理成可以照着做的分步实验。' },
   ];
@@ -2422,6 +2460,91 @@ function summaryTable(t, i) {
 }
 
 /** 思维导图：用 CSS 画成「主干 + 分支」的树，静态版和打印都正常 */
+/**
+ * 思维导图：横向树 + 曲线连线。
+ *
+ * 刻意把文字压到最短 —— 每个节点就是一个小圆角块里的几个字，
+ * 「谁连着谁、谁包含谁」全靠连线看，而不是靠读句子。
+ * 所以这里是手写布局 + SVG，不用现成的图库（那会引进一个依赖）。
+ */
+function mindmapLayout(root, { nodeH = 30, gapY = 13, colW = 186, pad = 22, maxKids = 6 } = {}) {
+  const nodes = [];
+  const links = [];
+  let row = 0;
+  let maxDepth = 0;
+  const walk = (node, depth, parent) => {
+    const me = {
+      label: String(node?.label || '').slice(0, 14),
+      depth,
+      x: pad + depth * colW,
+      y: 0,
+      w: colW - 34,
+      h: nodeH,
+    };
+    maxDepth = Math.max(maxDepth, depth);
+    nodes.push(me);
+    if (parent) links.push([parent, me]);
+    const kids = arr(node?.children).filter((k) => k && k.label).slice(0, maxKids);
+    if (!kids.length) {
+      me.y = pad + row * (nodeH + gapY);
+      row += 1;
+      return me.y;
+    }
+    const ys = kids.map((k) => walk(k, depth + 1, me));
+    me.y = (ys[0] + ys[ys.length - 1]) / 2;
+    return me.y;
+  };
+  walk(root, 0, null);
+  const width = pad * 2 + maxDepth * colW + (colW - 34);
+  const height = pad * 2 + Math.max(1, row) * (nodeH + gapY) - gapY;
+  return { nodes, links, width, height };
+}
+
+function renderMindmap(mm) {
+  const root = mm?.root;
+  if (!root || !root.label) {
+    return `<div class="card"><h3>${icon('mindmap', 15)}思维导图</h3>
+      <p style="color:var(--ink-2)">思维导图还没有生成。点右上角 <b>「重新生成本节」</b> 试试。</p></div>`;
+  }
+  const { nodes, links, width, height } = mindmapLayout(root);
+  const esc2 = (s) => esc(String(s || ''));
+
+  // 连线：从父节点右边缘到子节点左边缘，用三次贝塞尔画成弧线
+  const paths = links
+    .map(([a, b]) => {
+      const x1 = a.x + a.w;
+      const y1 = a.y + a.h / 2;
+      const x2 = b.x;
+      const y2 = b.y + b.h / 2;
+      const mx = (x1 + x2) / 2;
+      return `<path class="mm-link d${b.depth}" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}"/>`;
+    })
+    .join('');
+
+  const boxes = nodes
+    .map(
+      (n) => `<g class="mm-node d${n.depth}">
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${n.depth === 0 ? 11 : 8}"/>
+      <text x="${n.x + n.w / 2}" y="${n.y + n.h / 2}" dominant-baseline="central" text-anchor="middle">${esc2(n.label)}</text>
+    </g>`,
+    )
+    .join('');
+
+  const leafCount = nodes.filter((n) => n.depth >= 1).length;
+  return `
+    <div class="card mm-card">
+      <h3>${icon('mindmap', 15)}${esc(mm.title || '思维导图')}
+        <span class="spacer"></span>
+        <span class="mm-meta">${leafCount} 个节点 · 靠连线看结构</span>
+      </h3>
+      <div class="mm-canvas" id="mmCanvas">
+        <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img"
+             aria-label="${esc2(mm.title || '思维导图')}">${paths}${boxes}</svg>
+      </div>
+      <p class="hint" style="margin:10px 0 0">节点只写关键词，关系看连线：越往右越具体，同一横排的可以并列比较。</p>
+    </div>`;
+}
+
 function summaryMindmap(mm, { compact = false } = {}) {
   const branches = arr(mm?.branches);
   if (!branches.length) return '';
@@ -2706,6 +2829,8 @@ function renderNarration(n) {
 
   const fromVideo = segs.some((s) => s.fromVideo);
   const aiCount = segs.filter((s) => s.aiFilled).length;
+  // 左下角问答锚定在「当前页」上；没选过就是第一页
+  if (typeof state.narrPage !== 'number' || state.narrPage >= segs.length) state.narrPage = 0;
 
   return `
     ${videoCard}
@@ -2721,6 +2846,7 @@ function renderNarration(n) {
       </div>
       <div style="margin-top:18px"><button class="btn primary" id="startPresent">${icon('play', 14)}进入全屏讲解</button></div>
     </div>
+    ${renderPageChat()}
     ${segs
       .map((s, i) => {
         // 整页讲解稿可拖进右侧 AI 咨询
@@ -2738,11 +2864,12 @@ function renderNarration(n) {
             .filter(Boolean)
             .join('\n'),
         });
-        return `<div class="card" ${d.attrs}>
+        return `<div class="card narr-card ${i === state.narrPage ? 'current' : ''}" data-narr="${i}" ${d.attrs}>
         <h3><span class="num">${i + 1}</span>${esc(s.location || `第 ${i + 1} 页`)}　<span style="font-weight:500;color:var(--ink-2)">${esc(s.title || '')}</span>
           ${s.aiFilled ? '<span class="tag type">AI 补写</span>' : ''}
           ${s.fromVideo ? '<span class="tag src">录像原话</span>' : ''}
           <span class="spacer"></span>
+          <button class="btn sm ghost" data-ask="${i}">${icon('chat', 13)}就这一页提问</button>
           <button class="btn sm ghost" data-jump="${i}">${icon('play', 13)}讲这一页</button>
         </h3>
         <div class="narration-row">
@@ -2766,6 +2893,22 @@ function wireNarration() {
   $('#startPresent')?.addEventListener('click', () => openPresenter(0));
   $$('[data-jump]').forEach((b) => b.addEventListener('click', () => openPresenter(Number(b.dataset.jump))));
   $('#transcribeBtn')?.addEventListener('click', () => transcribeVideo());
+
+  // 左下角问答：切换「当前页」；问的就是这一页
+  $$('[data-ask]').forEach((b) =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectNarrPage(Number(b.dataset.ask), { focus: true });
+    }),
+  );
+  $$('[data-narr]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      // 点卡片空白处也算选中这一页；点按钮时不重复处理
+      if (e.target.closest('button')) return;
+      selectNarrPage(Number(el.dataset.narr));
+    }),
+  );
+  wirePageChat();
 
   // 缩略图懒渲染：滚到可见才画，避免一次渲染几十页 PDF
   const segs = arr(state.project?.analysis?.narration?.segments);
@@ -2841,6 +2984,294 @@ function findBlock(location) {
   return nonSlide.find(isCourseware) || nonSlide[0] || candidates.find(isCourseware) || candidates[0];
 }
 
+/* ---------------------- 项目 / 项目组的导出与导入 ---------------------- */
+
+/** 一个文件带走整个项目（含课件原件、生成的内容、做题记录、对话） */
+function exportCurrentProject() {
+  const p = state.project;
+  if (!p?.id) return;
+  if (isStaticProject(p)) return;
+  const url = `/api/projects/${p.id}/export.bundle`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('已开始导出，稍等片刻');
+}
+
+function isStaticProject() {
+  return typeof IS_STATIC !== 'undefined' && IS_STATIC;
+}
+
+/** 导出整个项目组 */
+function exportGroup(groupId) {
+  if (!groupId) return;
+  const a = document.createElement('a');
+  a.href = `/api/groups/${groupId}/export.bundle`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('已开始导出这个项目组');
+}
+
+/**
+ * 导入：文件是 JSON，可能很大（内嵌了课件原件），所以用 fetch 直接 POST 文本，
+ * 不走表单，也不预览，导完刷新列表。
+ */
+async function importBundleFile(file) {
+  if (!file) return;
+  if (file.size > 512 * 1024 * 1024) {
+    toast('这个文件太大了（超过 512MB），没法导入', 'err');
+    return;
+  }
+  toast(`正在导入 ${file.name}…`);
+  try {
+    const text = await file.text();
+    const res = await fetch('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: text,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `导入失败（${res.status}）`);
+    await loadWorkspace();
+    const names = arr(data.projects).map((x) => x.name).join('、');
+    toast(`导入完成：${data.projects.length} 个项目（${names}）${data.groups ? `，新建 ${data.groups} 个项目组` : ''}`);
+    // 直接切到导进来的第一个，省得用户自己找
+    if (data.projects[0]?.id) await switchProject(data.projects[0].id);
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+/* --------------------------- 主题：深色 / 浅色 --------------------------- */
+
+const THEME_KEY = 'cw_theme';
+
+/** 用户没选过就跟随系统 */
+function currentTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch {
+    /* 无痕模式下读不到，跟随系统即可 */
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light';
+}
+
+/** 主题全部靠 data-theme 覆盖 CSS 变量，组件样式不用改 */
+function applyTheme(mode) {
+  const m = mode === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = m;
+  const btn = $('#themeBtn');
+  if (btn) {
+    btn.innerHTML = icon(m === 'dark' ? 'sun' : 'moon', 15);
+    btn.title = m === 'dark' ? '切换到浅色' : '切换到深色';
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', m === 'dark' ? '#0e1218' : '#f5f6f8');
+}
+
+function setTheme(mode) {
+  try {
+    localStorage.setItem(THEME_KEY, mode);
+  } catch {
+    /* 存不下也无所谓，这次会话内仍然是生效的 */
+  }
+  applyTheme(mode);
+}
+
+function toggleTheme() {
+  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+}
+
+/* ------------------ 逐页讲解：左下角「就这一页提问」 ------------------ */
+
+/** 当前页对应的那条讲解稿 */
+function narrSegment() {
+  const segs = arr(state.project?.analysis?.narration?.segments);
+  const i = Math.max(0, Math.min(state.narrPage || 0, segs.length - 1));
+  return segs[i] || null;
+}
+
+/**
+ * 把「当前页」打包成给模型的上下文。
+ * 翻页时这个上下文会跟着换，所以问答永远是针对当前这一页的。
+ */
+function narrAttachment() {
+  const s = narrSegment();
+  if (!s) return null;
+  const text = [
+    s.title ? `标题：${s.title}` : '',
+    s.script ? `讲解稿：${s.script}` : '',
+    arr(s.keyPoints).length ? `要点：${s.keyPoints.join('；')}` : '',
+    s.askClass ? `自问：${s.askClass}` : '',
+    s.board ? `关键式子：${s.board}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (!text) return null;
+  return {
+    title: `${s.location || ''}${s.title ? ' ' + s.title : ''}`.trim() || '这一页',
+    source: '逐页讲解 · 当前页',
+    text,
+  };
+}
+
+function selectNarrPage(i, { focus } = {}) {
+  state.narrPage = i;
+  $$('[data-narr]').forEach((el) => el.classList.toggle('current', Number(el.dataset.narr) === i));
+  const s = narrSegment();
+  const label = $('#pcPage');
+  if (label) label.textContent = s?.location || `第 ${i + 1} 页`;
+  const sub = $('#pcTitle');
+  if (sub) sub.textContent = s?.title || '';
+  if (focus) {
+    expandPageChat(true);
+    $('#pcInput')?.focus();
+    $('#pageChat')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function expandPageChat(open) {
+  state.pageChat.open = open;
+  $('#pageChat')?.classList.toggle('collapsed', !open);
+  const btn = $('#pcToggle');
+  if (btn) btn.innerHTML = icon(open ? 'down' : 'chat', 13);
+  if (open) setTimeout(() => $('#pcInput')?.focus(), 60);
+}
+
+function pageChatMsg(m) {
+  const isUser = m.role === 'user';
+  return `<div class="pc-msg ${isUser ? 'user' : 'ai'}">
+    <div class="pc-bubble">${isUser ? esc(m.content).replace(/\n/g, '<br>') : mdToHtml(stripAiMarks(m.content))}</div>
+  </div>`;
+}
+
+function renderPageChat() {
+  const s = narrSegment();
+  const msgs = arr(state.project?.pageChat);
+  const open = state.pageChat.open !== false;
+  return `
+  <div class="page-chat ${open ? '' : 'collapsed'}" id="pageChat">
+    <div class="pc-head">
+      <span class="pc-dot"></span>
+      <b id="pcPage">${esc(s?.location || `第 ${(state.narrPage || 0) + 1} 页`)}</b>
+      <span class="pc-title" id="pcTitle">${esc(s?.title || '')}</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="pcClear" title="清空这一栏的对话">${icon('trash', 13)}</button>
+      <button class="icon-btn" id="pcToggle" title="展开 / 收起">${icon(open ? 'down' : 'chat', 13)}</button>
+    </div>
+    <div class="pc-body">
+      <div class="pc-hint">问的是<b>当前这一页</b>；翻到别页再问，上下文会跟着换。</div>
+      <div class="pc-msgs" id="pcMsgs">${
+        msgs.length
+          ? msgs.map(pageChatMsg).join('')
+          : '<div class="pc-empty">这一页有哪里没懂？直接问，AI 会只就这一页和你讲。</div>'
+      }</div>
+      <div class="pc-compose">
+        <textarea id="pcInput" rows="1" placeholder="就这一页提问，Enter 发送"></textarea>
+        <button class="btn sm primary" id="pcSend">${icon('send', 13)}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function wirePageChat() {
+  const panel = $('#pageChat');
+  if (!panel) return;
+  $('#pcToggle')?.addEventListener('click', () => expandPageChat(panel.classList.contains('collapsed')));
+  $('#pcClear')?.addEventListener('click', async () => {
+    const ok = await confirmBox({ title: '清空这一栏的对话？', body: '不会影响右侧 AI 咨询，也不会动生成好的内容。', okText: '清空' });
+    if (!ok) return;
+    state.project.pageChat = [];
+    try {
+      await api(`/api/projects/${state.project.id}/ask?channel=page`, { method: 'DELETE' });
+    } catch {
+      /* 服务端没删掉也无妨，本地已经清了 */
+    }
+    render();
+  });
+  const input = $('#pcInput');
+  const send = () => pageChatSend();
+  $('#pcSend')?.addEventListener('click', send);
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+  input?.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(120, input.scrollHeight) + 'px';
+  });
+}
+
+async function pageChatSend() {
+  if (state.pageChat.sending) return;
+  const input = $('#pcInput');
+  const question = (input?.value || '').trim();
+  if (!question) return;
+  if (!state.project?.id) return;
+  if (keyRequired() && !state.apiKey) {
+    openGate('需要 API Key 才能提问');
+    return;
+  }
+  const attachment = narrAttachment();
+  const attachments = attachment ? [attachment] : [];
+
+  state.pageChat.sending = true;
+  const local = arr(state.project.pageChat);
+  local.push({ role: 'user', content: question, at: new Date().toISOString() });
+  local.push({ role: 'assistant', content: '', streaming: true, at: new Date().toISOString() });
+  state.project.pageChat = local;
+  if (input) {
+    input.value = '';
+    input.style.height = 'auto';
+  }
+  render();
+
+  const box = () => $('#pcMsgs .pc-msg:last-child .pc-bubble');
+  const paint = (html) => {
+    const b = box();
+    if (b) b.innerHTML = html;
+    const msgs = $('#pcMsgs');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  };
+  try {
+    let acc = '';
+    await postSSE(
+      `/api/projects/${state.project.id}/ask`,
+      { question, attachments, channel: 'page' },
+      (e) => {
+        if (e.type === 'delta') {
+          acc += e.text || '';
+          local[local.length - 1].content = acc;
+          paint(mdToHtml(stripAiMarks(acc)) + '<span style="opacity:.4">▌</span>');
+        } else if (e.type === 'fatal') {
+          if (e.needsKey) openGate(e.message);
+          throw new Error(e.message || '回答失败');
+        }
+      },
+    );
+    if (!local[local.length - 1].content) throw new Error('模型没有返回内容，请重试');
+    delete local[local.length - 1].streaming;
+    state.pageChat.sending = false;
+    render();
+  } catch (err) {
+    state.pageChat.sending = false;
+    local.pop();
+    local.pop();
+    if (input) input.value = question;
+    toast(err.message, 'err');
+    render();
+  }
+}
+
 /* --------------------------- 全屏讲解模式 --------------------------- */
 
 function openPresenter(index = 0) {
@@ -2894,7 +3325,7 @@ function renderPresenter() {
         <h3>${esc(s.title || '')}</h3>
         <span class="timer" id="presTimer">00:00</span>
         <span class="counter">${i + 1} / ${segs.length}</span>
-        <button class="btn sm" id="presFs" style="background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#e2e8f0">${icon('maximize', 13)}全屏</button>
+        <button class="btn sm" id="presFs" title="藏掉浏览器界面（真全屏）。按 Esc 会直接退出讲解模式" style="background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#e2e8f0">${icon('maximize', 13)}<span id="presFsLabel">真全屏</span></button>
         <button class="btn sm" id="presExit" style="background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#e2e8f0">${icon('x', 13)}退出</button>
       </div>
       <div class="presenter-main">
@@ -2926,6 +3357,7 @@ function renderPresenter() {
             <span class="spacer"></span>
             <span>${esc(noShot)}</span>
           </div>
+          ${topicStrip(i)}
         </div>
       </div>
       <div class="presenter-foot">
@@ -2940,6 +3372,8 @@ function renderPresenter() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else $('.presenter')?.requestFullscreen?.().catch(() => toast('浏览器不允许全屏', 'err'));
   });
+  const fsLabel = $('#presFsLabel');
+  if (fsLabel) fsLabel.textContent = document.fullscreenElement ? '退出全屏' : '真全屏';
   $('#presPrev').addEventListener('click', () => goPresenter(-1));
   $('#presNext').addEventListener('click', () => goPresenter(1));
 
@@ -2951,7 +3385,15 @@ function renderPresenter() {
   };
   $('#presSlidePrev').addEventListener('click', () => flip(-1));
   $('#presSlideNext').addEventListener('click', () => flip(1));
+  // 点「同主题」里的某一段就直接跳过去
+  $$('[data-topic-jump]').forEach((el) =>
+    el.addEventListener('click', () => {
+      const n = Number(el.dataset.topicJump);
+      if (Number.isFinite(n) && n !== state.presenter.index) openPresenter(n);
+    }),
+  );
 
+  wireSlideZoom($('#presSlide'));
   mountSlide($('#presSlide'), pdf, page, { width: 1500 });
   slideCount(pdf).then((total) => {
     const el = $('#presSlideTotal');
@@ -2961,6 +3403,87 @@ function renderPresenter() {
   });
 
 
+}
+
+/**
+ * 课件原图悬停放大。
+ *
+ * 变换原点按图片在屏幕上的位置来定：靠右就锚右边、靠下就锚下边，
+ * 这样图总是朝屏幕中间长大，不会被挤出视野。触屏没有 hover，改成点一下放大、再点一下还原。
+ */
+function wireSlideZoom(stage) {
+  if (!stage) return;
+  const apply = () => {
+    const img = stage.querySelector('.slide-img');
+    if (!img) return;
+    const r = img.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const ox = cx > window.innerWidth / 2 ? 'right' : 'left';
+    const oy = cy > window.innerHeight / 2 ? 'bottom' : 'top';
+    img.style.transformOrigin = `${ox} ${oy}`;
+  };
+  // 用 mouseover 而不是 mouseenter：图片是异步渲染出来的，可能后到
+  stage.addEventListener('mouseover', apply);
+  if (window.matchMedia?.('(hover: none)')?.matches) {
+    stage.addEventListener('click', () => {
+      apply();
+      stage.classList.toggle('zoomed');
+    });
+  }
+}
+
+/**
+ * 当前页「同主题」的那几页。
+ *
+ * 优先用讲解稿里的 topic 字段（连续几页同主题时，模型会写成同一个词）；
+ * 老数据没有 topic 就退回「当前页 ±1」，至少给出上下文。
+ */
+function sameTopicOf(index) {
+  const segs = arr(state.project?.analysis?.narration?.segments);
+  const cur = segs[index];
+  if (!cur) return null;
+  const hasTopic = segs.some((s) => String(s.topic || '').trim());
+  const keyOf = (s) => String(s.topic || s.title || '').trim();
+  const key = keyOf(cur);
+
+  let from = index;
+  let to = index;
+  if (hasTopic && key) {
+    while (from > 0 && keyOf(segs[from - 1]) === key) from--;
+    while (to < segs.length - 1 && keyOf(segs[to + 1]) === key) to++;
+  } else {
+    from = Math.max(0, index - 1);
+    to = Math.min(segs.length - 1, index + 1);
+  }
+  const items = [];
+  for (let i = from; i <= to; i++) items.push({ i, s: segs[i] });
+  return { key: hasTopic ? key : '相邻内容', items, byTopic: hasTopic && Boolean(key) };
+}
+
+function topicStrip(index) {
+  const g = sameTopicOf(index);
+  if (!g || g.items.length < 2) return '';
+  return `
+    <div class="topic-strip">
+      <div class="ts-head">
+        ${icon('route', 12)}
+        <span>${g.byTopic ? '同一主题' : '上下文'}</span>
+        <b>${esc(g.key)}</b>
+        <span class="ts-range">第 ${g.items[0].i + 1}–${g.items[g.items.length - 1].i + 1} 段</span>
+      </div>
+      <ul class="ts-list">
+        ${g.items
+          .map(
+            (x) => `<li class="ts-item ${x.i === index ? 'cur' : ''}" data-topic-jump="${x.i}" title="跳到第 ${x.i + 1} 段">
+            <span class="ts-loc">${esc(x.s.location || `第 ${x.i + 1} 页`)}</span>
+            <span class="ts-title">${esc(x.s.title || '')}</span>
+          </li>`,
+          )
+          .join('')}
+      </ul>
+    </div>`;
 }
 
 function goPresenter(delta) {
@@ -3662,6 +4185,28 @@ function wireStaticEvents() {
     window.location.href = `/api/projects/${state.project.id}/export.md`;
   });
   $('#settingsBtn').addEventListener('click', openSettings);
+  $('#packBtn')?.addEventListener('click', exportCurrentProject);
+  $('#unpackBtn')?.addEventListener('click', () => $('#importInput')?.click());
+  $('#importInput')?.addEventListener('change', (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (f) importBundleFile(f);
+  });
+  $('#themeBtn').addEventListener('click', toggleTheme);
+  applyTheme(currentTheme());
+
+  // 手机端：侧栏是抽屉，点左上角按钮滑出，点遮罩或选中项目后收起
+  const closeNav = () => $('.app')?.classList.remove('nav-open');
+  const navBtn = $('#navBtn');
+  if (navBtn) {
+    navBtn.innerHTML = icon('list', 16);
+    navBtn.addEventListener('click', () => $('.app')?.classList.toggle('nav-open'));
+  }
+  $('#navScrim')?.addEventListener('click', closeNav);
+  // 点了某个项目就切过去，抽屉这时候应该让位给内容
+  $('#groupList')?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-proj]')) setTimeout(closeNav, 0);
+  });
 
   $('#newProjectBtn').addEventListener('click', () => newProjectUI());
   $('#newGroupBtn').addEventListener('click', newGroupUI);
@@ -3701,17 +4246,29 @@ function wireStaticEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (!$('.presenter')) return;
-    if (e.key === 'Escape') closePresenter();
-    else if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) {
+    if (e.key === 'Escape') {
+      // Esc 的语义是「退出全屏讲解」。讲解模式本身是一个铺满视口的浮层，
+      // 不依赖浏览器的 Fullscreen API，所以这里直接关掉它就对了。
+      e.preventDefault();
+      closePresenter();
+    } else if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) {
       e.preventDefault();
       goPresenter(1);
     } else if (['ArrowLeft', 'PageUp'].includes(e.key)) {
       e.preventDefault();
       goPresenter(-1);
     } else if (e.key === 'f' || e.key === 'F') {
+      // 真·全屏（藏掉浏览器界面）是额外选项，不是进入讲解模式的必要条件
       if (document.fullscreenElement) document.exitFullscreen?.();
       else $('.presenter')?.requestFullscreen?.().catch(() => {});
     }
+  });
+
+  // 在真·全屏下按 Esc，浏览器会先把全屏收掉（这个事件收不到按键），
+  // 于是用户会觉得「只退出了大屏、没退出讲解」。这里补一刀：一旦离开全屏，
+  // 讲解模式也一起收掉，保证一次 Esc 就能回到普通界面。
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && $('.presenter')) closePresenter();
   });
 
   document.addEventListener('keydown', (e) => {

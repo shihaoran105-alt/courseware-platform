@@ -294,6 +294,8 @@ export function slimProject(project, sid = '') {
     labProgress: project.labProgress || {},
     explain: project.explain || {},
     dockChat: project.dockChat || [],
+    // 逐页讲解左下角的「就这一页提问」，单独一条对话
+    pageChat: project.pageChat || [],
     aiChat: project.chat || [],
     // shape 里顺带把「可选哪些模式、推荐哪些」给前端，
     // 弹窗就不用自己再猜一遍规则了

@@ -1,6 +1,6 @@
 {
   "name": "courseware-platform",
-  "version": "1.6.1",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "课件讲解平台 — 上传课件，自动分析内容、讲解事例、生成教学应用方案，并支持在线做题与做 Lab",

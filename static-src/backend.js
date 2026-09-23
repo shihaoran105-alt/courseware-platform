@@ -134,6 +134,7 @@ function slim(project) {
     labProgress: project.labProgress || {},
     explain: project.explain || {},
     dockChat: project.dockChat || [],
+    pageChat: project.pageChat || [],
     shape: (() => {
       const sh = projectShape(project.files || []);
       sh.stages = STAGE_CATALOG;
@@ -184,6 +185,7 @@ async function newProject(name = '未命名课件', groupId = '') {
     analysis: null,
     chat: [],
     dockChat: [],
+    pageChat: [],
     attempts: {},
     labProgress: {},
     explain: {},
@@ -660,9 +662,10 @@ export async function api(path, options = {}) {
   if ((m = p.match(/^\/api\/projects\/([^/]+)\/ask$/)) && method === 'DELETE') {
     const project = await getProject(m[1]);
     if (!project) throw Object.assign(new Error('项目不存在'), { status: 404 });
-    project.dockChat = [];
+    const channel = String(body?.channel || '') === 'page' ? 'pageChat' : 'dockChat';
+    project[channel] = [];
     await save(project);
-    return { ok: true, dockChat: [] };
+    return { ok: true, [channel]: [] };
   }
 
   // 改一份材料的类别（和服务器版同一套规则）
@@ -953,13 +956,14 @@ export async function postSSE(path, body, onEvent) {
     }
     const cfg = aiConfig();
     let answer = '';
-    project.dockChat = project.dockChat || [];
+    const channel = String(body?.channel || '') === 'page' ? 'pageChat' : 'dockChat';
+    project[channel] = project[channel] || [];
     const text = await dockAsk({
       files: contextFor(project),
       cfg,
       question,
       attachments,
-      history: project.dockChat.slice(-10),
+      history: project[channel].slice(-10),
       onDelta: (d) => {
         answer += d;
         onEvent({ type: 'delta', text: d });
@@ -967,9 +971,9 @@ export async function postSSE(path, body, onEvent) {
     });
     answer = text || answer;
     if (!answer) throw new Error('模型没有返回内容，请重试');
-    project.dockChat.push({ role: 'user', content: question, attachments, at: new Date().toISOString() });
-    project.dockChat.push({ role: 'assistant', content: answer, at: new Date().toISOString() });
-    project.dockChat = project.dockChat.slice(-80);
+    project[channel].push({ role: 'user', content: question, attachments, at: new Date().toISOString() });
+    project[channel].push({ role: 'assistant', content: answer, at: new Date().toISOString() });
+    project[channel] = project[channel].slice(-80);
     await save(project);
     onEvent({ type: 'done' });
     return;
