@@ -55,8 +55,7 @@ const state = {
   collapsedGroups: new Set(),
   // 右侧 AI 咨询
   dock: { open: true, attachments: [], sending: false },
-  // 逐页讲解左下角的「就这一页提问」：当前页 + 它自己那条对话
-  narrPage: 0,
+  // 全屏讲解里的「就这一页提问」：它自己那条对话（开合状态）
   pageChat: { open: true, sending: false },
   // 中英对照的显示方式：both（上下对照）| zh（只看中文）| en（只看英文）
   biView: 'both',
@@ -2903,7 +2902,6 @@ function renderNarration(n) {
   const fromVideo = segs.some((s) => s.fromVideo);
   const aiCount = segs.filter((s) => s.aiFilled).length;
   // 左下角问答锚定在「当前页」上；没选过就是第一页
-  if (typeof state.narrPage !== 'number' || state.narrPage >= segs.length) state.narrPage = 0;
 
   return `
     ${videoCard}
@@ -2936,12 +2934,11 @@ function renderNarration(n) {
             .filter(Boolean)
             .join('\n'),
         });
-        return `<div class="card narr-card ${i === state.narrPage ? 'current' : ''}" data-narr="${i}" ${d.attrs}>
+        return `<div class="card" ${d.attrs}>
         <h3><span class="num">${i + 1}</span>${esc(s.location || `第 ${i + 1} 页`)}　<span style="font-weight:500;color:var(--ink-2)">${esc(s.title || '')}</span>
           ${s.aiFilled ? '<span class="tag type">AI 补写</span>' : ''}
           ${s.fromVideo ? '<span class="tag src">录像原话</span>' : ''}
           <span class="spacer"></span>
-          <button class="btn sm ghost" data-ask="${i}">${icon('chat', 13)}就这一页提问</button>
           <button class="btn sm ghost" data-jump="${i}">${icon('play', 13)}讲这一页</button>
         </h3>
         <div class="narration-row">
@@ -2965,21 +2962,6 @@ function wireNarration() {
   $('#startPresent')?.addEventListener('click', () => openPresenter(0));
   $$('[data-jump]').forEach((b) => b.addEventListener('click', () => openPresenter(Number(b.dataset.jump))));
   $('#transcribeBtn')?.addEventListener('click', () => transcribeVideo());
-
-  // 左下角问答：切换「当前页」；问的就是这一页
-  $$('[data-ask]').forEach((b) =>
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      selectNarrPage(Number(b.dataset.ask), { focus: true });
-    }),
-  );
-  $$('[data-narr]').forEach((el) =>
-    el.addEventListener('click', (e) => {
-      // 点卡片空白处也算选中这一页；点按钮时不重复处理
-      if (e.target.closest('button')) return;
-      selectNarrPage(Number(el.dataset.narr));
-    }),
-  );
 
   // 缩略图懒渲染：滚到可见才画，避免一次渲染几十页 PDF
   const segs = arr(state.project?.analysis?.narration?.segments);
@@ -3264,11 +3246,7 @@ function narrSegment(index) {
   const segs = arr(state.project?.analysis?.narration?.segments);
   // 这个问答面板现在只出现在全屏讲解里，所以「当前页」就是讲解走到的那一段。
   // 注意：拼 HTML 的那一刻 .presenter 还没插进 DOM，检测不到 —— 所以允许显式传页码。
-  const want = Number.isFinite(index)
-    ? index
-    : $('.presenter')
-      ? state.presenter.index
-      : state.narrPage || 0;
+  const want = Number.isFinite(index) ? index : state.presenter.index;
   const i = Math.max(0, Math.min(want, segs.length - 1));
   return segs[i] || null;
 }
@@ -3295,21 +3273,6 @@ function narrAttachment() {
     source: '逐页讲解 · 当前页',
     text,
   };
-}
-
-function selectNarrPage(i, { focus } = {}) {
-  state.narrPage = i;
-  $$('[data-narr]').forEach((el) => el.classList.toggle('current', Number(el.dataset.narr) === i));
-  const s = narrSegment();
-  const label = $('#pcPage');
-  if (label) label.textContent = s?.location || `第 ${i + 1} 页`;
-  const sub = $('#pcTitle');
-  if (sub) sub.textContent = s?.title || '';
-  if (focus) {
-    expandPageChat(true);
-    $('#pcInput')?.focus();
-    $('#pageChat')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
 }
 
 /** 展开 / 收起。收起时整块向右滑出屏幕，只留右上角一个小把手可以再叫回来。 */
@@ -3363,7 +3326,7 @@ function renderPageChat(index) {
   <div class="page-chat ${open ? '' : 'collapsed'}" id="pageChat">
     <div class="pc-head">
       <span class="pc-dot"></span>
-      <b id="pcPage">${esc(s?.location || `第 ${(state.narrPage || 0) + 1} 页`)}</b>
+      <b id="pcPage">${esc(s?.location || `第 ${state.presenter.index + 1} 页`)}</b>
       <span class="pc-title" id="pcTitle">${esc(s?.title || '')}</span>
       <span class="spacer"></span>
       <button class="icon-btn" id="pcClear" title="清空这一栏的对话">${icon('trash', 13)}</button>
@@ -3614,39 +3577,87 @@ function renderPresenter() {
 /**
  * 课件原图悬停放大 —— **只在非全屏的标签页里生效**。
  *
- * 全屏讲解里刻意不做放大：那里课件本来就是主角、已经占满右半边，再放大反而
- * 会盖住讲解稿。放大留给列表页里那些小尺寸的课件缩略图。
+ * 效果是「整张图**浮起来**」：放大 1.5 倍、带投影浮在页面之上压住下边的卡片，
+ * 页面其它部分一点都不动，移开就还原。
  *
- * 变换原点按图片在屏幕上的位置来定：靠右就锚右边、靠下就锚下边，
- * 这样图总是朝屏幕中间长大，不会被挤出视野。
+ * 只做 scale、不做位移：transform-origin 本来就是 center，
+ * 所以放大前后的中心位置完全一致。以前那套 translate + scale（把图搬到屏幕正中间、
+ * 放大 2 倍）已经去掉了 —— 用户要的是「原地长大一点」，不是「换个地方看大图」。
+ *
+ * 光有 transform 还不够，`.slide-stage` 自带的 overflow: hidden 会把放大的部分裁掉
+ * （尺寸算出来是大了，看到的还是那一小块），所以 .lifted 那句还要放开 overflow，
+ * 见 styles.css。
+ *
+ * 全屏讲解里不做放大：那里课件已是主角，再放大反而盖住讲解稿。
  * 用事件委托挂在 document 上：缩略图是异步渲染出来的，逐个绑定会漏。
- * 触屏没有 hover，改成点一下放大、再点一下还原。
+ * 触屏没有 hover，改成点一下浮起、再点一下还原；触摸后浏览器补发的 mouseover
+ * 必须屏蔽掉，否则「点开」会被紧跟的 click 立刻收回，表现成点了没反应。
  */
 function wireSlideZoom() {
   const stageOf = (target) => target?.closest?.('.tab-body .slide-stage');
-  const point = (stage) => {
+
+  const raise = (stage) => {
     const img = stage.querySelector('.slide-img');
-    if (!img) return;
+    if (!img || img.dataset.lifted === '1') return;
     const r = img.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const ox = cx > window.innerWidth / 2 ? 'right' : 'left';
-    const oy = cy > window.innerHeight / 2 ? 'bottom' : 'top';
-    img.style.transformOrigin = `${ox} ${oy}`;
+    // 只放大、不位移：transform-origin 就是 center，
+    // 所以放大前后的中心位置完全一致（不做 translate，也不改 transform-origin）。
+    img.dataset.lifted = '1';
+    img.style.transform = 'scale(1.5)';
+    stage.classList.add('lifted');
   };
-  document.addEventListener('mouseover', (e) => {
-    const stage = stageOf(e.target);
-    if (stage) point(stage);
-  });
-  if (window.matchMedia?.('(hover: none)')?.matches) {
-    document.addEventListener('click', (e) => {
-      const stage = stageOf(e.target);
-      if (!stage || e.target.closest('button')) return;
-      point(stage);
-      stage.classList.toggle('zoomed');
+
+  const drop = (stage) => {
+    const img = stage?.querySelector?.('.slide-img');
+    if (!img || img.dataset.lifted !== '1') return;
+    delete img.dataset.lifted;
+    img.style.transform = '';
+    stage.classList.remove('lifted');
+  };
+
+  const dropAll = (except) => {
+    document.querySelectorAll('.tab-body .slide-stage.lifted').forEach((s) => {
+      if (s !== except) drop(s);
     });
-  }
+  };
+
+  // 触屏上浏览器会在手指离开后补发一串鼠标事件（mouseover → click）。
+  // 如果 hover 逻辑也响应，就会「刚点开放大、紧接着又被自己收回」，
+  // 表现成点了没反应。所以记下触摸时刻，触摸后短时间内只认点击。
+  const TOUCH_GRACE = 900;
+  let lastTouch = -1e9;
+  const fromTouch = () => Date.now() - lastTouch < TOUCH_GRACE;
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') lastTouch = Date.now();
+  }, true);
+
+  document.addEventListener('mouseover', (e) => {
+    if (fromTouch()) return;
+    const stage = stageOf(e.target);
+    dropAll(stage);
+    if (stage) raise(stage);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (fromTouch()) return;
+    const stage = stageOf(e.target);
+    if (!stage) return;
+    // 还在同一张图里挪动就不还原
+    if (e.relatedTarget && stage.contains(e.relatedTarget)) return;
+    drop(stage);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!fromTouch()) return;
+    const stage = stageOf(e.target);
+    if (!stage) { dropAll(null); return; } // 手指点别处就收回
+    if (e.target.closest('button')) return;
+    if (stage.classList.contains('lifted')) drop(stage);
+    else {
+      dropAll(stage);
+      raise(stage);
+    }
+  });
 }
 
 /**

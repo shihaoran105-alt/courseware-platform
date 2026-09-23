@@ -1964,44 +1964,37 @@ ul.clean li::marker { color: var(--ink-4); }
 /* ==========================================================================
    课件原图悬停放大 —— 只在**非全屏**的标签页里生效
    --------------------------------------------------------------------------
-   全屏讲解（.presenter）里刻意不做放大：那里课件本来就是主角、已经占满右半边，
-   再放大反而会盖住讲解稿。放大留给列表页里那些小尺寸的课件缩略图。
-   放大时页面其它部分完全不动，也不是全屏。
-   变换原点由 JS 按图片在屏幕上的位置设置：靠右就锚右边、靠下就锚下边，
-   于是图总是朝屏幕中间长大，不会被挤出视野。
+   整张图**浮起来**：放大 1.5 倍、中心点原地不动、带投影浮在页面之上，
+   压住下边的卡片，移开就还原。页面其它部分一点都不动，也不是全屏。
+   只做 scale 不做位移，配合 transform-origin: center —— 放大前后的中心位置完全一致。
+   全屏讲解（.presenter）里不做放大：那里课件已是主角，再放大反而盖住讲解稿。
    ========================================================================== */
 .tab-body .slide-stage { position: relative; }
 .tab-body .slide-stage .slide-img {
   display: block; border-radius: 5px;
   transform-origin: center center;
-  transition: transform .34s cubic-bezier(.16, .84, .24, 1),
-              box-shadow .34s ease, filter .34s ease;
+  transition: transform .36s cubic-bezier(.16, .84, .24, 1),
+              box-shadow .36s ease;
   will-change: transform;
   cursor: zoom-in;
 }
-.tab-body .slide-stage:hover .slide-img {
-  transform: scale(2);
-  z-index: 80;
+/* 浮起来的那张：抬到最上层，投影拉深，像被拿起来一样。
+   关键是 .slide-stage 自身为「缩略图裁切」设了 overflow: hidden，
+   不放开的话放大的图会被原地裁掉 —— 尺寸算出来是大了，但看到的还是那一小块，
+   也就盖不住下边的卡片。 */
+.tab-body .slide-stage.lifted { overflow: visible; }
+.tab-body .slide-stage .slide-img {
+  backface-visibility: hidden;
+}
+.tab-body .slide-stage.lifted .slide-img {
+  z-index: 90;
   position: relative;
-  box-shadow: 0 42px 90px rgba(0, 0, 0, .6), 0 0 0 1px rgba(0, 0, 0, .08);
-  filter: brightness(1.04);
+  border-radius: 8px;
+  box-shadow: 0 44px 96px rgba(0, 0, 0, .5), 0 0 0 1px rgba(0, 0, 0, .06);
+  cursor: zoom-out;
 }
-/* 放大期间要让祖先允许溢出，否则会被卡片裁掉 */
-.tab-body .card:has(.slide-stage:hover),
-.narration-row:has(.slide-stage:hover),
-.explain-split:has(.slide-stage:hover),
-.explain-source:has(.slide-stage:hover) { overflow: visible; }
-
-/* 触屏没有 hover，用手指点一下放大、再点一下还原 */
-@media (hover: none) {
-  .tab-body .slide-stage:hover .slide-img { transform: none; box-shadow: none; filter: none; }
-  .tab-body .slide-stage.zoomed .slide-img {
-    transform: scale(2); z-index: 80; position: relative;
-    box-shadow: 0 42px 90px rgba(0, 0, 0, .6); cursor: zoom-out;
-  }
-  .tab-body .card:has(.slide-stage.zoomed),
-  .narration-row:has(.slide-stage.zoomed) { overflow: visible; }
-}
+/* 整张卡片抬到后面那些兄弟卡片之上，放大区才不会被它们盖住 */
+.tab-body .card:has(.slide-stage.lifted) { position: relative; z-index: 60; }
 
 /* ==========================================================================
    逐页讲解：左下角「就这一页提问」
@@ -2009,10 +2002,6 @@ ul.clean li::marker { color: var(--ink-4); }
    锚在主内容区（.main）的左下角，跟着当前页走：翻到别页再问，上下文就换了。
    ========================================================================== */
 .main { position: relative; }
-
-.narr-card { transition: border-color .18s, background .18s; cursor: pointer; }
-.narr-card.current { border-color: var(--brand); background: var(--brand-soft); }
-.narr-card.current .num { background: var(--brand); color: #fff; }
 
 .page-chat {
   /* 挂在 .presenter 里（全屏浮层），所以这里是相对全屏的位置；
