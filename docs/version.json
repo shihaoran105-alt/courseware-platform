@@ -1,9 +1,20 @@
 {
-  "version": "2.1.1",
-  "buildId": "2026-09-23-deep-mindmap",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.1.1/courseware-platform-v2.1.1.zip",
-  "releasedAt": "2026-09-23T11:02:25.473Z",
+  "version": "2.1.2",
+  "buildId": "2026-09-23-zoom-and-chat-scope",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.1.2/courseware-platform-v2.1.2.zip",
+  "releasedAt": "2026-09-23T11:12:53.159Z",
   "history": [
+    {
+      "version": "2.1.2",
+      "date": "2026-09-23",
+      "title": "放大挪到非全屏、小窗口问答挪进全屏讲解",
+      "changes": [
+        "**课件放大只在非全屏状态生效了**。之前挂在全屏讲解里，那里课件本来就已经占满右半边、是主角，再放大反而盖住左边的讲解稿。现在放大回到标签页里那些小尺寸的课件缩略图（逐页讲解卡片、结合课件讲解的左栏），鼠标移上去照样放大一倍浮起；全屏讲解里的课件图不再放大",
+        "**小窗口 AI 对话只在全屏讲解里出现**。它现在是讲解模式的一部分：翻到哪一段，面板标题和上下文就跟着换成那一段（第 3 段 → 「第 3 页 Topics」），问的就是当前这一页。标签页列表里不再有这块浮层，不再挡着卡片",
+        "**收起之后在左下角留一个便捷入口**：面板向右滑出屏幕后，左下角出现一枚「就这一页提问」的小胶囊，点一下面板滑回来。面板收起时是先右滑再淡出，不是原地消失；面板本身改成深色配色，和讲解模式一致，底部上移让开那排翻页按钮",
+        "顺手修一个显示 bug：面板标题原来一直显示「第 1 页」——因为拼 HTML 的那一刻 .presenter 还没插进 DOM，检测不到讲解状态。现在改成显式把当前段号传进去，标题和上下文都跟得上"
+      ]
+    },
     {
       "version": "2.1.1",
       "date": "2026-09-23",

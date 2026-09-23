@@ -2919,7 +2919,6 @@ function renderNarration(n) {
       </div>
       <div style="margin-top:18px"><button class="btn primary" id="startPresent">${icon('play', 14)}进入全屏讲解</button></div>
     </div>
-    ${renderPageChat()}
     ${segs
       .map((s, i) => {
         // 整页讲解稿可拖进右侧 AI 咨询
@@ -2981,7 +2980,6 @@ function wireNarration() {
       selectNarrPage(Number(el.dataset.narr));
     }),
   );
-  wirePageChat();
 
   // 缩略图懒渲染：滚到可见才画，避免一次渲染几十页 PDF
   const segs = arr(state.project?.analysis?.narration?.segments);
@@ -3262,9 +3260,16 @@ function toggleTheme() {
 /* ------------------ 逐页讲解：左下角「就这一页提问」 ------------------ */
 
 /** 当前页对应的那条讲解稿 */
-function narrSegment() {
+function narrSegment(index) {
   const segs = arr(state.project?.analysis?.narration?.segments);
-  const i = Math.max(0, Math.min(state.narrPage || 0, segs.length - 1));
+  // 这个问答面板现在只出现在全屏讲解里，所以「当前页」就是讲解走到的那一段。
+  // 注意：拼 HTML 的那一刻 .presenter 还没插进 DOM，检测不到 —— 所以允许显式传页码。
+  const want = Number.isFinite(index)
+    ? index
+    : $('.presenter')
+      ? state.presenter.index
+      : state.narrPage || 0;
+  const i = Math.max(0, Math.min(want, segs.length - 1));
   return segs[i] || null;
 }
 
@@ -3346,8 +3351,8 @@ function pageChatMsg(m) {
   </div>`;
 }
 
-function renderPageChat() {
-  const s = narrSegment();
+function renderPageChat(index) {
+  const s = narrSegment(index);
   const msgs = arr(state.project?.pageChat);
   const open = state.pageChat.open !== false;
   state.pageChat.open = open;
@@ -3564,6 +3569,7 @@ function renderPresenter() {
         <div class="bar"><i style="width:${pct}%"></i></div>
         <button id="presNext" ${i === segs.length - 1 ? 'disabled' : ''}>下一段${icon('right', 13)}</button>
       </div>
+      ${renderPageChat(i)}
     </div>`;
 
   $('#presExit').addEventListener('click', closePresenter);
@@ -3592,7 +3598,8 @@ function renderPresenter() {
     }),
   );
 
-  wireSlideZoom($('#presSlide'));
+  wirePageChat();
+  // 全屏讲解里刻意不做课件放大：这里课件已是主角，再放大反而盖住讲解稿
   mountSlide($('#presSlide'), pdf, page, { width: 1500 });
   slideCount(pdf).then((total) => {
     const el = $('#presSlideTotal');
@@ -3605,14 +3612,19 @@ function renderPresenter() {
 }
 
 /**
- * 课件原图悬停放大。
+ * 课件原图悬停放大 —— **只在非全屏的标签页里生效**。
+ *
+ * 全屏讲解里刻意不做放大：那里课件本来就是主角、已经占满右半边，再放大反而
+ * 会盖住讲解稿。放大留给列表页里那些小尺寸的课件缩略图。
  *
  * 变换原点按图片在屏幕上的位置来定：靠右就锚右边、靠下就锚下边，
- * 这样图总是朝屏幕中间长大，不会被挤出视野。触屏没有 hover，改成点一下放大、再点一下还原。
+ * 这样图总是朝屏幕中间长大，不会被挤出视野。
+ * 用事件委托挂在 document 上：缩略图是异步渲染出来的，逐个绑定会漏。
+ * 触屏没有 hover，改成点一下放大、再点一下还原。
  */
-function wireSlideZoom(stage) {
-  if (!stage) return;
-  const apply = () => {
+function wireSlideZoom() {
+  const stageOf = (target) => target?.closest?.('.tab-body .slide-stage');
+  const point = (stage) => {
     const img = stage.querySelector('.slide-img');
     if (!img) return;
     const r = img.getBoundingClientRect();
@@ -3623,11 +3635,15 @@ function wireSlideZoom(stage) {
     const oy = cy > window.innerHeight / 2 ? 'bottom' : 'top';
     img.style.transformOrigin = `${ox} ${oy}`;
   };
-  // 用 mouseover 而不是 mouseenter：图片是异步渲染出来的，可能后到
-  stage.addEventListener('mouseover', apply);
+  document.addEventListener('mouseover', (e) => {
+    const stage = stageOf(e.target);
+    if (stage) point(stage);
+  });
   if (window.matchMedia?.('(hover: none)')?.matches) {
-    stage.addEventListener('click', () => {
-      apply();
+    document.addEventListener('click', (e) => {
+      const stage = stageOf(e.target);
+      if (!stage || e.target.closest('button')) return;
+      point(stage);
       stage.classList.toggle('zoomed');
     });
   }
@@ -4394,6 +4410,7 @@ function wireStaticEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   applyTheme(currentTheme());
   wireInstall();
+  wireSlideZoom();
 
   // 手机端：侧栏是抽屉，点左上角按钮滑出，点遮罩或选中项目后收起
   const closeNav = () => $('.app')?.classList.remove('nav-open');
