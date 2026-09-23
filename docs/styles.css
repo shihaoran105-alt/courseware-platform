@@ -2184,3 +2184,23 @@ ul.clean li::marker { color: var(--ink-4); }
   display: inline-grid; place-items: center; width: 20px; height: 20px; vertical-align: -4px;
   border: 1px solid var(--brand-line); border-radius: 5px; background: var(--brand-soft); color: var(--brand);
 }
+
+/* 思维导图工具条：图大了要能缩放，否则深图看不全 */
+.mm-tools {
+  display: flex; align-items: center; gap: 6px; margin: 10px 0 8px;
+}
+.mm-tools .btn { padding: 4px 9px; }
+.mm-zoom {
+  font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums;
+  min-width: 42px; text-align: center;
+}
+.mm-scaler { position: relative; }
+.mm-scaler svg { display: block; }
+
+/* 更深的分支用更细更淡的线，层次一眼分得开 */
+.mm-link.d3 { stroke: var(--line); stroke-width: 1.2; }
+.mm-link.d4 { stroke: var(--line); stroke-width: 1; }
+.mm-node.d3 rect { fill: var(--surface-2); stroke: var(--line); }
+.mm-node.d3 text { fill: var(--ink-3); font-size: 11.5px; font-weight: 500; }
+.mm-node.d4 rect { fill: var(--surface-2); stroke: var(--line); }
+.mm-node.d4 text { fill: var(--ink-4); font-size: 11px; font-weight: 450; }

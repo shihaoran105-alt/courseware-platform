@@ -1751,6 +1751,7 @@ function renderBody() {
   }
 
   if (state.tab === 'narration') wireNarration();
+  else if (state.tab === 'mindmap') wireMindmapTools();
   else if (state.tab === 'combine') wireCombine();
   else if (state.tab === 'quiz') wireQuiz();
   else if (state.tab === 'lab') wireLab();
@@ -2469,23 +2470,41 @@ function summaryTable(t, i) {
  * 「谁连着谁、谁包含谁」全靠连线看，而不是靠读句子。
  * 所以这里是手写布局 + SVG，不用现成的图库（那会引进一个依赖）。
  */
-function mindmapLayout(root, { nodeH = 30, gapY = 13, colW = 186, pad = 22, maxKids = 6 } = {}) {
+function mindmapLayout(root, { maxKids = 12 } = {}) {
   const nodes = [];
   const links = [];
   let row = 0;
   let maxDepth = 0;
+
+  /** 先量一遍有多深多大，再决定间距 —— 节点多的时候要收紧，否则图会高得没法看 */
+  const count = (n, d = 0) => {
+    maxDepth = Math.max(maxDepth, d);
+    return 1 + arr(n?.children).reduce((a, c) => a + count(c, d + 1), 0);
+  };
+  const total = count(root);
+
+  // 大图收紧、小图松快
+  const nodeH = total > 70 ? 24 : total > 40 ? 26 : 30;
+  const gapY = total > 70 ? 7 : total > 40 ? 9 : 13;
+  const colW = maxDepth >= 4 ? 174 : maxDepth === 3 ? 184 : 194;
+  const pad = 20;
+
   const walk = (node, depth, parent) => {
+    // 每层往里缩一点缩进，深层节点短一些，视觉上能看出亲疏
+    const inset = depth === 0 ? 0 : 10 + depth * 4;
     const me = {
-      label: String(node?.label || '').slice(0, 14),
+      label: String(node?.label || '').slice(0, 16),
       depth,
       x: pad + depth * colW,
       y: 0,
-      w: colW - 34,
+      w: colW - inset - 16,
       h: nodeH,
     };
     maxDepth = Math.max(maxDepth, depth);
     nodes.push(me);
     if (parent) links.push([parent, me]);
+
+    // 注意：不要静默丢掉孩子 —— 那等于把模型拆好的结构吃掉
     const kids = arr(node?.children).filter((k) => k && k.label).slice(0, maxKids);
     if (!kids.length) {
       me.y = pad + row * (nodeH + gapY);
@@ -2497,9 +2516,10 @@ function mindmapLayout(root, { nodeH = 30, gapY = 13, colW = 186, pad = 22, maxK
     return me.y;
   };
   walk(root, 0, null);
-  const width = pad * 2 + maxDepth * colW + (colW - 34);
+
+  const width = pad * 2 + maxDepth * colW + (colW - 16);
   const height = pad * 2 + Math.max(1, row) * (nodeH + gapY) - gapY;
-  return { nodes, links, width, height };
+  return { nodes, links, width, height, total, depth: maxDepth };
 }
 
 function renderMindmap(mm) {
@@ -2508,10 +2528,9 @@ function renderMindmap(mm) {
     return `<div class="card"><h3>${icon('mindmap', 15)}思维导图</h3>
       <p style="color:var(--ink-2)">思维导图还没有生成。点右上角 <b>「重新生成本节」</b> 试试。</p></div>`;
   }
-  const { nodes, links, width, height } = mindmapLayout(root);
+  const { nodes, links, width, height, total, depth } = mindmapLayout(root);
   const esc2 = (s) => esc(String(s || ''));
 
-  // 连线：从父节点右边缘到子节点左边缘，用三次贝塞尔画成弧线
   const paths = links
     .map(([a, b]) => {
       const x1 = a.x + a.w;
@@ -2519,32 +2538,84 @@ function renderMindmap(mm) {
       const x2 = b.x;
       const y2 = b.y + b.h / 2;
       const mx = (x1 + x2) / 2;
-      return `<path class="mm-link d${b.depth}" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}"/>`;
+      return `<path class="mm-link d${Math.min(b.depth, 4)}" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}"/>`;
     })
     .join('');
 
   const boxes = nodes
     .map(
-      (n) => `<g class="mm-node d${n.depth}">
+      (n) => `<g class="mm-node d${Math.min(n.depth, 4)}">
       <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${n.depth === 0 ? 11 : 8}"/>
       <text x="${n.x + n.w / 2}" y="${n.y + n.h / 2}" dominant-baseline="central" text-anchor="middle">${esc2(n.label)}</text>
     </g>`,
     )
     .join('');
 
-  const leafCount = nodes.filter((n) => n.depth >= 1).length;
   return `
     <div class="card mm-card">
       <h3>${icon('mindmap', 15)}${esc(mm.title || '思维导图')}
         <span class="spacer"></span>
-        <span class="mm-meta">${leafCount} 个节点 · 靠连线看结构</span>
+        <span class="mm-meta">${total} 个节点 · ${depth + 1} 层</span>
       </h3>
-      <div class="mm-canvas" id="mmCanvas">
-        <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img"
-             aria-label="${esc2(mm.title || '思维导图')}">${paths}${boxes}</svg>
+      <div class="mm-tools">
+        <button class="btn sm ghost" data-mm-zoom="out" title="缩小">${icon('x', 12)}</button>
+        <span class="mm-zoom" id="mmZoom">100%</span>
+        <button class="btn sm ghost" data-mm-zoom="in" title="放大">${icon('plus', 12)}</button>
+        <button class="btn sm ghost" data-mm-fit>适应窗口</button>
+        <button class="btn sm ghost" data-mm-fit="1">1:1</button>
       </div>
-      <p class="hint" style="margin:10px 0 0">节点只写关键词，关系看连线：越往右越具体，同一横排的可以并列比较。</p>
+      <div class="mm-canvas" id="mmCanvas">
+        <div class="mm-scaler" id="mmScaler" style="width:${width}px;height:${height}px">
+          <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img"
+               aria-label="${esc2(mm.title || '思维导图')}">${paths}${boxes}</svg>
+        </div>
+      </div>
+      <p class="hint" style="margin:10px 0 0">节点只写关键词，关系看连线：越往右越具体，同一横排的可以并列比较。图大时可以缩放或适应窗口。</p>
     </div>`;
+}
+
+/** 缩放：整张图按倍数缩放，容器跟着改尺寸，滚动条才对得上 */
+function applyMindmapZoom(z) {
+  const scaler = $('#mmScaler');
+  if (!scaler) return;
+  const svg = scaler.querySelector('svg');
+  if (!svg) return;
+  const w = Number(svg.getAttribute('width')) || 1;
+  const h = Number(svg.getAttribute('height')) || 1;
+  const clamped = Math.max(0.2, Math.min(3, z));
+  svg.style.transformOrigin = '0 0';
+  svg.style.transform = `scale(${clamped})`;
+  scaler.style.width = `${w * clamped}px`;
+  scaler.style.height = `${h * clamped}px`;
+  scaler.dataset.zoom = String(clamped);
+  const label = $('#mmZoom');
+  if (label) label.textContent = `${Math.round(clamped * 100)}%`;
+}
+
+function wireMindmapTools() {
+  const canvas = $('#mmCanvas');
+  if (!canvas) return;
+  const fit = (target) => {
+    const scaler = $('#mmScaler');
+    const svg = scaler?.querySelector('svg');
+    if (!svg) return;
+    const w = Number(svg.getAttribute('width')) || 1;
+    const h = Number(svg.getAttribute('height')) || 1;
+    // 适应窗口时不要把图放大到超过 100%，那样只会变糊
+    const z = Math.min(1, (canvas.clientWidth - 24) / w, (canvas.clientHeight - 24) / h);
+    applyMindmapZoom(target === 1 ? 1 : z);
+  };
+  $$('[data-mm-zoom]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const cur = Number($('#mmScaler')?.dataset.zoom || 1);
+      applyMindmapZoom(b.dataset.mmZoom === 'in' ? cur * 1.2 : cur / 1.2);
+    }),
+  );
+  $$('[data-mm-fit]').forEach((b) =>
+    b.addEventListener('click', () => fit(b.dataset.mmFit === '1' ? 1 : 0)),
+  );
+  // 默认先适应窗口，大图一进来就能看全貌
+  fit(0);
 }
 
 function summaryMindmap(mm, { compact = false } = {}) {

@@ -1,10 +1,24 @@
 {
-  "version": "2.1.0",
-  "buildId": "2026-09-23-installable-app",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.1.0/courseware-platform-v2.1.0.zip",
-  "packageSha256": "ddb0fd691f56f69822bd48a9234d7c15df70e924789b3d3a3f442960787a68d8",
-  "releasedAt": "2026-09-23T10:52:15.998Z",
+  "version": "2.1.1",
+  "buildId": "2026-09-23-deep-mindmap",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.1.1/courseware-platform-v2.1.1.zip",
+  "packageSha256": "2a42c4cb8b17fc2ad5d5bec75b8778376fcac2f85e03553da5e461ec6e5ed3d4",
+  "releasedAt": "2026-09-23T11:02:25.473Z",
   "history": [
+    {
+      "version": "2.1.1",
+      "date": "2026-09-23",
+      "title": "思维导图拆得更深更细，并修好「生成为空」",
+      "changes": [
+        "**先修一个真 bug**：思维导图以前根本生成不出来。实测发现，视觉模型（deepseek-flash）在「带图片 + 要求 JSON」时会把整个输出预算烧在内部推理上——finish_reason=length、completion_tokens 顶满 8000、正文长度 0，于是整节报「模型返回了空内容」。同一份提示词不带图片走 deepseek-chat 就正常。所以思维导图现在**刻意不发页面截图**：它本来就是对着文字做抽象，图片帮不上忙，去掉还更快更便宜",
+        "**提示词重写，拆得更深**：层级从 3 层放到 5 层，一级分支 4-8 个，明确要求「每一个还能分的小点都必须继续拆，不要因为怕长而停在第二层」。实测同一份 95 页课件：原来只有十几个大节点，现在 **271 个节点 / 5 层 / 11 个知识分支**",
+        "**只画知识，不画杂项**：明确列出不许出现在图里的东西——课程名、课程编号、教师姓名、学期、日期、页码、章节序号，以及「本页讲什么」这类空壳。第一版生成时把教师名字也画进去了，收紧后才干净",
+        "**规模有上限**：要求 60-140 个节点。太少了是没拆细，太多了是把不重要的也塞进来了",
+        "**渲染器跟着升级**：支持 5 层以上、几百个节点；新增缩放工具条（缩小 / 放大 / 适应窗口 / 1:1），大图一进来先自动适应窗口看全貌；深度越大线条越细越淡、节点越浅，层次一眼分得开。顺带修掉一个隐患——原来每个节点最多只渲染 6 个孩子，多出来的会被**静默丢掉**，等于把模型拆好的结构吃掉，现在放到 12 个且不会无声无息",
+        "标题旁边显示「N 个节点 · M 层」，一眼知道这张图拆到什么程度",
+        "顺带：思维导图重跑不再改写 analysis.pagesRead（它一张图都没发，不该动那个记录）"
+      ]
+    },
     {
       "version": "2.1.0",
       "date": "2026-09-23",

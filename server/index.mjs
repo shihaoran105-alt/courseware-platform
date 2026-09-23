@@ -937,8 +937,9 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
     const bilingual = Boolean(project.analysis.analysisEn);
     const data = await rerunStage({ stage, files, cfg: { ...cfg, lang: 'zh' }, pageImages });
     project.analysis[stage] = data;
-    // 记下这一节是不是用读图生成的，否则页面上的标记会一直停留在旧状态
-    if (pageImages.length) {
+    // 记下这一节是不是用读图生成的，否则页面上的标记会一直停留在旧状态。
+    // 思维导图刻意不发图（发了视觉模型会返回空），所以它不该改写这个记录。
+    if (pageImages.length && stage !== 'mindmap') {
       project.analysis.pagesRead = pageImages.length;
       project.analysis.visionModel = cfg.visionModel || 'deepseek-flash';
     }

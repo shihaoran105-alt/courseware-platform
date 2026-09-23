@@ -163,7 +163,20 @@ export async function generateNarration({
 }
 
 /**
- * 执行完整分析流水线
+ * 思维导图的调用参数：**刻意不发页面截图**。
+ *
+ * 实测：视觉模型（deepseek-flash）收到图片 + JSON 模式时，会把整个输出预算
+ * 烧在内部推理上 —— finish_reason=length、completion_tokens 顶满 8000、正文长度 0，
+ * 于是整节直接失败。同一份提示词不带图片走 deepseek-chat 就正常（92 节点 / 5 层）。
+ *
+ * 而且思维导图本来就只需要文字：它是对整份材料**文字内容**的抽象，
+ * 页面截图在这里帮不上忙，去掉还更快更便宜。
+ */
+function mindmapArgs(context, summary) {
+  return { system: MINDMAP_SYSTEM, user: mindmapUser(context, summary) };
+}
+
+/** 执行完整分析流水线
  * @param {object} opts
  * @param {Array} opts.files 已抽取的文件
  * @param {object} opts.cfg 运行时配置
@@ -327,10 +340,8 @@ export async function runFullAnalysis({
       weight: 12,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
-          system: MINDMAP_SYSTEM,
-          images: imgsFor(packedPages()),
-          user: withPages(mindmapUser(context, summary), packedPages()),
-          maxTokens: 4000,
+          ...mindmapArgs(context, summary),
+          maxTokens: 8000,
           signal,
         });
         addUsage(usage);
@@ -542,10 +553,8 @@ export async function rerunStage({ stage, files, cfg, signal, pageImages = [] })
     }
     case 'mindmap': {
       const { data } = await completeJSON(cfg, {
-        system: MINDMAP_SYSTEM,
-        images: imgsFor(packedPages()),
-        user: withPages(mindmapUser(context, summary), packedPages()),
-        maxTokens: 4000,
+        ...mindmapArgs(context, summary),
+        maxTokens: 8000,
         signal,
       });
       return data;
