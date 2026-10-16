@@ -949,16 +949,23 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
      */
     let pageImages = [];
     const readMode = readModeOf(req.body);
+    /**
+     * 这次「要读图却一张都没读到」的原因。
+     * 只发一次警告是不够的 —— 生成过程里一闪而过的提示，用户回头看讲解稿时早忘了，
+     * 于是只会觉得「改了半天还是老样子」。存进 analysis 里，之后一直能看到。
+     */
+    let imageNote = '';
     if (readMode !== 'text' && !chromeState().available) {
       // 以前这里是「静默跳过」：读图请求落空，用户只会看到讲解稿里
       // 「课件没有给出正文内容」这种莫名其妙的结论（其实页面上有图有代码）。
+      imageNote =
+        '这次是按纯文字生成的：当时没找到 Chrome / Edge，课件里画成图片的代码块、电路图、表格都没读到。' +
+        '装好浏览器后点「重新生成本节」即可。';
       stream.send({
         type: 'stage-detail',
         stage: 'analysis',
         level: 'warn',
-        message:
-          `没找到 Chrome / Edge，这次**只能按文字读**：课件里画成图片的代码块、电路图、表格都看不到。` +
-          `装一个 Google Chrome（或 Edge）后重新生成即可。`,
+        message: imageNote,
       });
     }
     if (readMode !== 'text' && chromeState().available) {
@@ -984,12 +991,20 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
               '，其余按文字读',
           });
         }
+        if (!pageImages.length) {
+          imageNote =
+            r.total > 0
+              ? `这次是按纯文字生成的：这份材料按「${READ_MODE_LABEL[readMode]}」没有挑中任何一页读图。` +
+                '课件里画成图片的内容可能读不到，可以在生成时选「全部读图」重来。'
+              : '这次是按纯文字生成的：没有找到可以渲染的页面。';
+        }
       } catch (err) {
+        imageNote = `这次是按纯文字生成的：页面截图没生成出来（${err.message}）。`;
         stream.send({
           type: 'stage-detail',
           stage: 'analysis',
           level: 'warn',
-          message: `页面截图没生成出来，这次按纯文字读：${err.message}`,
+          message: imageNote,
         });
       }
     } else if (readMode === 'text') {
@@ -1042,6 +1057,9 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
 
     project.analysis = result;
     project.analysisStale = false;
+    // 把「这次要读图却没读到」的原因存在结果里：重新生成一次就会自然消失，
+    // 用户之后翻讲解稿时还能看到当时到底发生了什么。
+    if (imageNote) project.analysis.imageNote = imageNote;
     // 对照模式：把英文那一遍的结果按阶段存起来，前端直接叠在中文下面
     if (altEn) {
       project.analysis.analysisEn = {

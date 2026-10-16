@@ -51,15 +51,25 @@ export function isBlankPageText(t) {
  */
 export function applyOcrToBlocks(blocks, texts) {
   let hit = 0;
+  /**
+   * 这次**真正补上文字的页码**。
+   *
+   * 调用方要靠它决定「这一页还要不要发图片」：只有这些页的文字是完整的，
+   * 其余的页（本来就有文字层的）OCR 一个字都没写进去 ——
+   * 而投影片的常见形态正是「标题是真文字、代码块/图表是截图」，
+   * 那类页只发文字等于什么都没发（正文全在截图里）。
+   */
+  const filled = [];
   const out = (blocks || []).map((b) => {
     const n = Number(b.page ?? (String(b.label || '').match(/\d+/) || [])[0]);
     const t = n > 0 ? texts?.[n] : '';
     if (!t) return b;
     if (!isBlankPageText(b.text)) return b; // 本来就有文字层，尊重原文
     hit++;
+    if (n > 0) filled.push(n);
     return { ...b, text: t, ocr: true };
   });
-  return { blocks: out, hit };
+  return { blocks: out, hit, pages: filled };
 }
 
 export const OCR_SYSTEM = `你在帮学生把**扫描件/拍照件**的页面转成可检索的文字。

@@ -1957,6 +1957,11 @@ function renderBody() {
   const staleBar = state.project.analysisStale
     ? `<div class="note-box" style="margin-bottom:12px">${icon('alert', 12)}课件文件在上次分析后有过变动，建议重新生成。</div>`
     : '';
+  // 这次生成时「要读图却没读到」——过程里的提示一闪而过，存下来的这条一直能看到，
+  // 否则用户翻讲解稿时只会看到「课件没有给出内容」这种莫名其妙的结论。
+  const imageNoteBar = a.imageNote
+    ? `<div class="note-box" style="margin-bottom:12px">${icon('alert', 12)}${esc(a.imageNote)}</div>`
+    : '';
 
   // 中英对照生成的项目：给一个切换「对照 / 只看中文 / 只看英文」的小条，
   // 不然每一页都被拉成两倍长，想专注看一种语言时很难受
@@ -1981,7 +1986,7 @@ function renderBody() {
          <span>${icon('users', 14)} 你正在浏览<b>公开演示项目</b>（只读）。里面的内容是用别人的课件生成的，可以直接体验讲解模式、做题和做 Lab。</span>
          <button class="btn sm primary" id="demoOwn">建立我自己的项目 →</button>
        </div>`;
-  body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${rerunBar}${biBar}${inner}</div>`;
+  body.innerHTML = `<div class="panel">${demoBar}${banner}${staleBar}${imageNoteBar}${rerunBar}${biBar}${inner}</div>`;
   wireAltBlock();
 
   // 被跳过的节只挂一个「只生成这一节」按钮，别的交互都没东西可挂

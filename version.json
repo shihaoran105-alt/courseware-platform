@@ -1,10 +1,21 @@
 {
-  "version": "2.2.1",
-  "buildId": "2026-10-16-selfhost-not-public",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.1/courseware-platform-v2.2.1.zip",
-  "packageSha256": "a9cd337122a2eafcc4c54c98b83368ed192cea93593b533daad1285f1849c7c2",
-  "releasedAt": "2026-10-16T08:11:01.831Z",
+  "version": "2.2.2",
+  "buildId": "2026-10-16-read-image-visible",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.2/courseware-platform-v2.2.2.zip",
+  "packageSha256": "da451a06372277dc99fa5edce30e4d376e873ecb08d3a215377d6227e2120c77",
+  "releasedAt": "2026-10-16T09:07:28.983Z",
   "history": [
+    {
+      "version": "2.2.2",
+      "date": "2026-10-16",
+      "title": "读图没读到会留下说明，OCR 改成按页判断",
+      "changes": [
+        "**说清楚「这次是按纯文字生成的」。** 生成时如果没找到浏览器、或按读图模式一页都没挑中、或截图渲染失败，现在会把**原因存进结果里** —— 之后打开讲解稿一直能看到一条提示，并告诉你点「重新生成本节」即可。以前这类提示只在生成过程里一闪而过，回头看讲解稿时只看到「课件没有给出内容」这种莫名其妙的结论，很容易以为修复没生效。",
+        "**修好「OCR 过的课件会整份丢掉页面图」。** 原来只要一份文件被 OCR 过，它的页面图就全部不再发给模型，理由是「内容已经在文字里了」。但投影片常见形态是「标题是真文字、代码块和图表是截图」—— 这类页不是空白页，OCR 一个字都不会写进去（尊重原文），图又被丢掉，于是模型只看到标题，写出「课件没有给出任何正文内容」，而页面上明明印着整段代码。现在改成**按页判断**：只有 OCR 确实补上文字的页才不发图，其余照发。老数据从页面块上的标记反推，不用重新 OCR。",
+        "**找不到浏览器时不再静默降级**：生成过程里会明确警告「这次只能按文字读」，而不是悄悄跳过。",
+        "新增**只读诊断脚本** `scripts/diagnose-read-image.mjs`（发行包里也有）：一次看清「找不找得到 Chrome / Edge、能不能真渲出一页、各项目生成时发了几页图、页图缓存里有没有空文件、最近的报错日志」。以后「模型说课件里没有内容」这类问题，先跑它。"
+      ]
+    },
     {
       "version": "2.2.1",
       "date": "2026-10-16",
