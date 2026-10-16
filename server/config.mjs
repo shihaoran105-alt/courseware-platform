@@ -150,6 +150,10 @@ export function loadServerConfig() {
     maxInputChars: Number(process.env.MAX_INPUT_CHARS) || Number(saved.maxInputChars) || DEFAULTS.maxInputChars,
     port: Number(process.env.PORT) || DEFAULTS.port,
     host: process.env.HOST || DEFAULTS.host,
+    // 每次生成思维导图时，额外写一份 markdown 到哪个文件夹（空 = 不写）。
+    // 格式按 dsh-mindmap 插件认的规则：文件名 = 根节点，# 标题、缩进列表 = 子节点。
+    mindmapDir: process.env.MINDMAP_DIR || saved.mindmapDir || '',
+    mindmapExportedAt: saved.mindmapExportedAt || '',
   };
 }
 
@@ -210,6 +214,8 @@ export function saveConfig(patch = {}) {
   }
   if (typeof patch.model === 'string' && patch.model.trim()) next.model = patch.model.trim();
   if (typeof patch.baseUrl === 'string' && patch.baseUrl.trim()) next.baseUrl = patch.baseUrl.trim();
+  // 脑图导出的目标文件夹。允许存空字符串 = 关掉这个功能。
+  if (typeof patch.mindmapDir === 'string') next.mindmapDir = patch.mindmapDir.trim();
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
   return loadServerConfig();
 }
@@ -270,6 +276,7 @@ export function publicConfig() {
     publicModeExplicit: explicitPublicMode(),
     hasServerKey: Boolean(apiKey),
     accessRequired: accessRequired(),
+    mindmapDir: loadServerConfig().mindmapDir,
     model: base.model,
     visionModel: base.visionModel,
     baseUrl: base.baseUrl,

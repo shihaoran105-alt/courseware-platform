@@ -30,6 +30,7 @@ import { normalizeStages } from './stages.mjs';
 import { chromeState, rasterizePdf, pageStats, selectPages } from './render-pages.mjs';
 import { readModeOf, READ_MODE_LABEL } from './page-select.mjs';
 import { isScannedDoc, isBlankPageText, ocrPages, applyOcrToBlocks } from './ocr.mjs';
+import { mindmapToMarkdown, mindmapFileName } from './mindmap-md.mjs';
 import { BUNDLE_EXT, packProjects, parseBundle, materializeProject, writeMedia } from './transfer.mjs';
 import {
   MEDIA_DIR,
@@ -362,7 +363,13 @@ app.post('/api/config', (req, res) => {
     }
     setAccessPassword(req.body.accessPassword);
   }
-  saveConfig({ apiKey: req.body?.apiKey, model: req.body?.model, baseUrl: req.body?.baseUrl });
+  saveConfig({
+    apiKey: req.body?.apiKey,
+    model: req.body?.model,
+    baseUrl: req.body?.baseUrl,
+    // 脑图导出文件夹：必须一起转发，否则前端填了、存下去却是空的
+    mindmapDir: req.body?.mindmapDir,
+  });
   res.json(publicConfig());
 });
 
@@ -388,6 +395,32 @@ app.post('/api/verify-key', async (req, res) => {
 });
 
 /* -------------------------------- 项目 API ------------------------------- */
+
+/**
+ * 把现有项目的思维导图一次性导出成 markdown。
+ * 不用重新生成、不花额度 —— 已经生成过脑图的项目也能拿到文件。
+ */
+app.post('/api/mindmap/export-all', (req, res) => {
+  const dir = String(loadServerConfig().mindmapDir || '').trim();
+  if (!dir) {
+    res.status(400).json({ error: '先在「设置」里填一个脑图导出文件夹' });
+    return;
+  }
+  let exported = 0;
+  let skipped = 0;
+  const failed = [];
+  for (const p of listProjects(req.sid)) {
+    const full = getProject(p.id);
+    if (!full?.analysis?.mindmap?.root) {
+      skipped++;
+      continue;
+    }
+    const r = exportMindmapFile(full, full.analysis.mindmap);
+    if (r.ok) exported++;
+    else if (failed.length < 8) failed.push(`${p.name}：${r.reason}`);
+  }
+  res.json({ ok: true, exported, skipped, failed, dir });
+});
 
 app.get('/api/projects', (req, res) => res.json({ projects: listProjects(req.sid) }));
 
@@ -748,6 +781,73 @@ async function pagesForProject(project, mode = 'auto') {
  * @returns {Promise<{images:Array<{label:string,page:number,dataUrl:string,file:string}>,
  *                    total:number, selected:number, mode:string}>}
  */
+/**
+ * 思维导图额外导出一份 markdown（给 dsh-mindmap 这类插件直接打开）。
+ *
+ * 文件名**按项目固定**，记在 data/mindmap-export.json 里：同一份课件重新生成脑图时
+ * 覆盖同一个文件，不会越堆越多。重名时自动让开，不覆盖别人的文件。
+ *
+ * 全程不抛错 —— 导出失败绝不能连累生成本身。
+ */
+const MINDMAP_INDEX_FILE = path.join(DATA_DIR, 'mindmap-export.json');
+
+function readMindmapIndex() {
+  try {
+    const d = JSON.parse(fs.readFileSync(MINDMAP_INDEX_FILE, 'utf8'));
+    return d && typeof d === 'object' ? d : {};
+  } catch {
+    return {};
+  }
+}
+
+function exportMindmapFile(project, mm) {
+  const dir = String(loadServerConfig().mindmapDir || '').trim();
+  if (!dir) return { ok: false, reason: '还没设置导出文件夹' };
+  const md = mindmapToMarkdown(mm);
+  if (!md) return { ok: false, reason: '这张脑图没有内容' };
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const idx = readMindmapIndex();
+    let name = String(idx[project.id] || '').trim();
+
+    if (!name) {
+      const base = mindmapFileName(mm?.root?.label || mm?.title || project.name);
+      name = `${base}.md`;
+      // 让开已经存在的文件（可能是别的项目导出的，也可能是用户自己的笔记）
+      for (let i = 2; fs.existsSync(path.join(dir, name)) && i < 100; i++) {
+        name = `${base}-${i}.md`;
+      }
+    }
+
+    const file = path.join(dir, name);
+    // 先写临时文件再改名：插件那边正在看这个文件时，不会读到写了一半的内容
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, md, 'utf8');
+    try {
+      fs.renameSync(tmp, file);
+    } catch {
+      // Windows 上目标文件被别的程序占着时改名会失败 —— 退化成直接写
+      fs.writeFileSync(file, md, 'utf8');
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* 忽略 */
+      }
+    }
+
+    idx[project.id] = name;
+    try {
+      fs.writeFileSync(MINDMAP_INDEX_FILE, JSON.stringify(idx, null, 2), 'utf8');
+    } catch {
+      /* 索引写不进去不影响这次导出 */
+    }
+    return { ok: true, file, name };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
 async function collectPageImages({ project, emit = () => {}, mode = 'auto' }) {
   const images = [];
   let total = 0;
@@ -1084,6 +1184,20 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
       delete project.analysis.analysisEn;
     }
     persist(project);
+    // 这次生成了脑图就额外导出一份 markdown（失败不影响生成）
+    if (project.analysis?.mindmap?.root) {
+      const r = exportMindmapFile(project, project.analysis.mindmap);
+      if (r.ok) {
+        stream.send({ type: 'stage-detail', stage: 'mindmap', message: `脑图已另存为 ${r.name}` });
+      } else if (loadServerConfig().mindmapDir) {
+        stream.send({
+          type: 'stage-detail',
+          stage: 'mindmap',
+          level: 'warn',
+          message: `脑图没能导出成 markdown：${r.reason}`,
+        });
+      }
+    }
     stream.send({ type: 'saved', project: slim(req, project) });
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -1149,7 +1263,11 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
       project.analysis.analysisEn[stage] = en;
     }
     persist(project);
-    res.json({ ok: true, stage, data, project: slim(req, project) });
+    let mindmapExport = null;
+    if (stage === 'mindmap' && project.analysis?.mindmap?.root) {
+      mindmapExport = exportMindmapFile(project, project.analysis.mindmap);
+    }
+    res.json({ ok: true, stage, data, project: slim(req, project), mindmapExport });
   } catch (err) {
     failJson(req, res, err);
   }

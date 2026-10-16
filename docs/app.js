@@ -4636,6 +4636,21 @@ function openSettings() {
                <input type="password" id="setPass" placeholder="${cfg.accessRequired ? '••••••（不改就留空）' : '设一个访问口令'}" autocomplete="new-password" style="flex:1">
                ${cfg.accessRequired ? '<button class="btn sm" id="clearPass">关闭口令</button>' : ''}
              </div>
+           </div>
+           <div class="field" style="margin-top:4px">
+             <label>脑图导出文件夹</label>
+             <p class="hint" style="margin:0 0 9px">
+               每次生成思维导图时，额外写一份 markdown 到这个文件夹，可以直接用
+               DeepSeek Harness 的思维导图插件打开（文件名就是根节点）。
+               同一份课件重新生成会覆盖同一个文件，不会越堆越多。<b>留空 = 不导出。</b>
+             </p>
+             <p class="hint" style="margin:0 0 9px;color:var(--ink-3)">
+               填 DSH 会话的工作目录下的 <code>.mindmaps</code> 最省事 —— 那边打开就看得见。
+             </p>
+             <div style="display:flex;gap:9px;align-items:center">
+               <input type="text" id="setMindmapDir" value="${esc(cfg.mindmapDir || '')}" placeholder="例如 C:\\Users\\你\\Documents\\deepseek-harness\\.mindmaps" style="flex:1">
+               <button class="btn sm" id="exportMindmaps">导出全部现有脑图</button>
+             </div>
            </div>`
     }
     <div class="modal-actions" style="justify-content:space-between">
@@ -4647,6 +4662,36 @@ function openSettings() {
       </div>
     </div>
   `);
+
+  // 已经生成过脑图的项目也能一次拿到文件，不用重新花额度生成
+  $('#exportMindmaps')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const dir = ($('#setMindmapDir')?.value || '').trim();
+    btn.disabled = true;
+    btn.textContent = '正在导出…';
+    try {
+      if (!IS_STATIC) {
+        await api('/api/config', { method: 'POST', body: JSON.stringify({ mindmapDir: dir }) });
+        state.config = await api('/api/config');
+      }
+      const r = await api('/api/mindmap/export-all', { method: 'POST' });
+      if (!r.exported) {
+        toast(r.skipped ? `没有可导出的脑图（跳过 ${r.skipped} 个还没生成脑图的项目）` : '一个都没导出', 'err');
+      } else {
+        toast(
+          `已导出 ${r.exported} 份脑图到该文件夹` +
+            (r.skipped ? `（${r.skipped} 个项目还没生成脑图，跳过）` : '') +
+            (r.failed?.length ? `；${r.failed.length} 个失败` : ''),
+          'ok',
+        );
+      }
+    } catch (err) {
+      toast(err.message || '导出失败', 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '导出全部现有脑图';
+    }
+  });
 
   const hint = () => {
     const sel = providers().find((x) => x.id === $('#setProvider').value) || p;
@@ -4726,13 +4771,21 @@ function openSettings() {
       return;
     }
     applyLocal(v);
-    // 访问口令是服务器级设置，得单独发到后端存（其余几项只存在浏览器里）
+    // 访问口令、脑图导出文件夹都是服务器级设置，得单独发到后端存
+    // （其余几项只存在浏览器里）
     const pw = ($('#setPass')?.value || '').trim();
-    if (pw && !IS_STATIC) {
+    const mmDir = $('#setMindmapDir')?.value;
+    if (!IS_STATIC) {
       try {
-        await api('/api/config', { method: 'POST', body: JSON.stringify({ accessPassword: pw }) });
+        const patch = {};
+        if (pw) patch.accessPassword = pw;
+        if (mmDir !== undefined) patch.mindmapDir = mmDir.trim();
+        if (Object.keys(patch).length) {
+          await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
+          state.config = await api('/api/config');
+        }
       } catch (e) {
-        toast(e.message || '访问口令没设上', 'err');
+        toast(e.message || '服务器设置没存上', 'err');
         return;
       }
     }

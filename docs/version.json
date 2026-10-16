@@ -1,9 +1,21 @@
 {
-  "version": "2.2.3",
-  "buildId": "2026-10-16-no-password-deadlock",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.3/courseware-platform-v2.2.3.zip",
-  "releasedAt": "2026-10-16T09:11:46.882Z",
+  "version": "2.3.0",
+  "buildId": "2026-10-16-mindmap-export-md",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.3.0/courseware-platform-v2.3.0.zip",
+  "releasedAt": "2026-10-16T09:37:25.884Z",
   "history": [
+    {
+      "version": "2.3.0",
+      "date": "2026-10-16",
+      "title": "思维导图可以自动导出成 markdown（给脑图插件用）",
+      "changes": [
+        "**新增：每次生成思维导图，自动额外写一份 markdown 到指定文件夹。** 格式按 DeepSeek Harness 的思维导图插件（dsh-mindmap）认的规则来：**文件名就是根节点**，`#` 标题是各个一级分支，列表项按 2 空格缩进表示层级。所以你在平台里生成完脑图，直接去 DSH 那边打开那个文件就能看见、还能继续编辑。",
+        "**同一份课件重新生成会覆盖同一个文件**，不会越堆越多（哪个项目对应哪个文件名记在 data/mindmap-export.json 里）。万一重名，会自动让开，绝不覆盖你已有的笔记。",
+        "**导出用「先写临时文件再改名」**：插件那边正在看这个文件时，不会读到写了一半的内容。Windows 上目标文件被别的程序占用、改名失败时，会自动退化成直接写。",
+        "**设置里新增「脑图导出文件夹」**，留空就是不导出。旁边还有一个**「导出全部现有脑图」**按钮 —— 已经生成过脑图的项目也能一次性拿到文件，不用重新花额度生成一遍。",
+        "导出失败**绝不会连累生成本身**：生成照常完成，只在进度里给一句失败原因。"
+      ]
+    },
     {
       "version": "2.2.3",
       "date": "2026-10-16",
