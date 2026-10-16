@@ -1,10 +1,21 @@
 {
-  "version": "2.2.2",
-  "buildId": "2026-10-16-read-image-visible",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.2/courseware-platform-v2.2.2.zip",
-  "packageSha256": "da451a06372277dc99fa5edce30e4d376e873ecb08d3a215377d6227e2120c77",
-  "releasedAt": "2026-10-16T09:07:28.983Z",
+  "version": "2.2.3",
+  "buildId": "2026-10-16-no-password-deadlock",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.3/courseware-platform-v2.2.3.zip",
+  "packageSha256": "d112ac4d533136ae99579716ff6f0209a4d7bcbb80e0ae67e9b2dd7f1eb14bbe",
+  "releasedAt": "2026-10-16T09:11:46.882Z",
   "history": [
+    {
+      "version": "2.2.3",
+      "date": "2026-10-16",
+      "title": "修好「访问口令永远设不上」的死锁",
+      "changes": [
+        "**修好一个死锁：因为没设口令所以判成公开，因为是公开所以不许设口令。** 自建服务器为了让局域网 / Tailscale 能访问必须绑 0.0.0.0，没设口令时平台会把它当成公开部署；而「设置访问口令」这个操作本身又写着「公开部署不允许修改」—— 于是口令**永远设不上**，更新按钮只剩一句「请联系服务器管理员更新」，而管理员就是你自己，无处可联系。现在凡是「只有服务器主人能做的事」都改用**明确声明的**公开部署来判断，不再用推测出来的那种；设口令这一步就是那条出路。",
+        "**更新弹窗会说清楚原因和办法**，不再只有一句「请联系服务器管理员更新」。它会告诉你：服务器绑了对外地址、又还没设访问口令，去「设置 → 访问口令」设一个就行 —— 这里立刻就能直接更新。确实更新不了时，也会给出「下载安装包手动更新一次」的退路。",
+        "**设置页在同样情况下会给一条醒目提示**，并说明设了口令之后会一并解除「不能用服务器自己配的 API Key」这件事。",
+        "**修好 API Key 被静默丢弃**：推测出来的公开部署下，保存 Key 会被默默丢掉、界面却提示「已保存」。现在只有明确声明的公开部署才禁止写入。"
+      ]
+    },
     {
       "version": "2.2.2",
       "date": "2026-10-16",

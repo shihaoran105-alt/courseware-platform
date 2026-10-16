@@ -67,6 +67,22 @@ const truthy = (v) => v === '1' || v === 'true' || v === 'yes';
 const falsy = (v) => v === '0' || v === 'false' || v === 'no';
 
 /**
+ * 是不是**部署者明确声明**的公开部署（PUBLIC_MODE 被显式设成真）。
+ *
+ * 和 isPublicMode() 的区别很重要：那个函数还会「推测」——
+ * 绑了 0.0.0.0 又没设口令时也算公开。但推测出来的公开**不能挡住建访问口令**，
+ * 否则就是死锁：
+ *     因为没设口令 → 判成公开部署 → 公开部署不允许设口令 → 永远设不上。
+ * 用户看到的是「请联系服务器管理员更新」，而管理员就是他自己，无处可联系。
+ *
+ * 所以凡是「只有服务器主人能做的事」都该用这个函数来判断，
+ * 而不是用会推测的 isPublicMode()。
+ */
+export function explicitPublicMode() {
+  return truthy(process.env.PUBLIC_MODE);
+}
+
+/**
  * 是否公开模式（公开部署 = 给别人用：访客自带 Key、不能用服务器 Key、不能点更新、限额生效）。
  *
  * 判断顺序：
@@ -178,11 +194,16 @@ export function resolveRequestConfig(req) {
   );
 }
 
-/** 保存服务端偏好（公开模式下禁止写入 Key） */
+/**
+ * 保存服务端偏好。
+ * 只有**明确声明**的公开部署才禁止写 Key —— 用 isPublicMode() 会把
+ * 「绑了 0.0.0.0 还没设口令」这种推测出来的公开也算进去，
+ * 于是 Key 被静默丢掉、界面却提示「已保存」。
+ */
 export function saveConfig(patch = {}) {
   const saved = readJson(CONFIG_FILE, {});
   const next = { ...saved };
-  if (!isPublicMode() && typeof patch.apiKey === 'string') {
+  if (!explicitPublicMode() && typeof patch.apiKey === 'string') {
     const v = patch.apiKey.trim();
     if (v) next.apiKey = v;
     else delete next.apiKey;
@@ -244,6 +265,9 @@ export function publicConfig() {
   const { apiKey } = serverKey();
   return {
     publicMode: isPublicMode(),
+    // 这个「公开」是部署者明确声明的，还是平台推测出来的（对外但没设口令）？
+    // 前端要靠它给出正确提示：推测出来的那种，设一个访问口令就能变回自己的服务器。
+    publicModeExplicit: explicitPublicMode(),
     hasServerKey: Boolean(apiKey),
     accessRequired: accessRequired(),
     model: base.model,

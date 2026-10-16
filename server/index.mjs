@@ -21,6 +21,7 @@ import {
   accessPasswordHash,
   checkAccessPassword,
   setAccessPassword,
+  explicitPublicMode,
 } from './config.mjs';
 import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
@@ -346,9 +347,16 @@ app.post('/api/config', (req, res) => {
     res.status(403).json({ error: '本站为公开部署，请使用你自己的 API Key（只需填在浏览器里，不会上传服务器）。' });
     return;
   }
-  // 访问口令：只有本机模式（也就是服务器主人）能改 —— 访客不该能改服务器的大门
+  /**
+   * 访问口令：只有**明确声明**的公开部署才禁止修改。
+   *
+   * 这里以前用的是 isPublicMode()，而它会把「绑了 0.0.0.0 但还没设口令」也判成公开
+   * ——于是成了死锁：因为没设口令所以判成公开，因为是公开所以不许设口令。
+   * 用户看到「请联系服务器管理员更新」，而管理员就是他自己。
+   * 推测出来的公开必须留一条出路，那就是设口令这件事本身。
+   */
   if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'accessPassword')) {
-    if (isPublicMode()) {
+    if (explicitPublicMode()) {
       res.status(403).json({ error: '公开部署不允许修改服务器访问口令' });
       return;
     }

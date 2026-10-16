@@ -859,13 +859,25 @@ function openVersionModal() {
 
   // 二、GitHub 上有更新的版本 —— 本机部署可直接下载、替换并重启
   if (s.kind === 'remote' || remotePending.length) {
+    /**
+     * 「不能更新」时必须说清楚**为什么**、以及**怎么办**。
+     * 原来只有一句「请联系服务器管理员更新」—— 可那台服务器就是用户自己的，
+     * 没地方联系，看完只能干瞪眼。
+     */
+    const cfg = state.config || {};
+    const blockedHint = cfg.publicModeExplicit
+      ? '这是公开部署，更新由服务器管理员负责。'
+      : '平台现在把自己当成「公开部署」，所以不允许在这里更新 —— 原因是服务器绑了对外地址、但还没设访问口令。' +
+        '去「设置 → 访问口令」设一个，这里立刻就能直接更新（顺带也会开始使用服务器自己配的 API Key）。';
+    const canUpdate = remote.editable !== false;
     parts.push(`<div class="update-remote">
       <p style="color:var(--ink-2);font-size:13.5px;margin:0 0 4px">
         ${s.repair ? `GitHub 上的 v${esc(remote.version)} 构建与你本机不一致。` : `GitHub 上已发布 <b>v${esc(remote.version)}</b>，你这边是 <b>v${esc(v.current)}</b>。`}
-        ${remote.editable === false ? '请联系服务器管理员更新。' : '可以直接下载新版本并替换旧程序；项目数据和本机配置会保留。'}
+        ${canUpdate ? '可以直接下载新版本并替换旧程序；项目数据和本机配置会保留。' : blockedHint}
       </p>
       <div class="changelog">${remotePending.map(block).join('') || `<p style="color:var(--ink-4)">（远端没有给出更新说明）</p>`}</div>
-      ${remote.editable === false ? '' : `<p style="margin:10px 0 0;font-size:12.5px;color:var(--ink-3)">更新时会删除旧程序文件，保留 data、.env 和 Git 仓库信息。</p>`}
+      ${canUpdate ? '' : `<p style="margin:10px 0 0;font-size:12.5px;color:var(--ink-3)">也可以手动更新：下载 Windows / macOS 安装包重新运行一次，data 文件夹会保留。</p>`}
+      ${canUpdate ? `<p style="margin:10px 0 0;font-size:12.5px;color:var(--ink-3)">更新时会删除旧程序文件，保留 data、.env 和 Git 仓库信息。</p>` : ''}
       ${repo ? `<p style="margin:10px 0 0;font-size:12.5px"><a href="${esc(repo)}" target="_blank" rel="noopener">去 GitHub 仓库看看 ↗</a></p>` : ''}
     </div>`);
   }
@@ -4613,6 +4625,13 @@ function openSettings() {
                放到外网时建议设一个：不设的话，谁知道地址谁就能用你的 API Key、往你磁盘写东西。
                ${cfg.accessRequired ? '留空表示不改；想彻底关掉请点下面的「关闭口令」。' : '设了之后打开平台要先输口令。'}
              </p>
+             ${
+               cfg.publicMode && !cfg.publicModeExplicit && !cfg.accessRequired
+                 ? `<p class="note-box" style="margin:0 0 9px">${icon('alert', 12)}服务器绑了对外地址、又还没设访问口令，所以平台现在把自己当成「公开部署」：
+                    不能用服务器自己配的 API Key、也不能一键更新（会提示「请联系服务器管理员更新」）。
+                    <b>在下面设一个口令，这两个限制立刻解除。</b></p>`
+                 : ''
+             }
              <div style="display:flex;gap:9px;align-items:center">
                <input type="password" id="setPass" placeholder="${cfg.accessRequired ? '••••••（不改就留空）' : '设一个访问口令'}" autocomplete="new-password" style="flex:1">
                ${cfg.accessRequired ? '<button class="btn sm" id="clearPass">关闭口令</button>' : ''}
