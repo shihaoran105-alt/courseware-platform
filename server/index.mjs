@@ -842,7 +842,7 @@ async function ocrScannedFiles({ project, cfg, stream, signal }) {
         signal,
         cache: ocrCacheFor(f.storedName || f.id),
       });
-      const { blocks, hit } = applyOcrToBlocks(f.blocks, ocr.pages);
+      const { blocks, hit, pages: filledPages } = applyOcrToBlocks(f.blocks, ocr.pages);
       f.blocks = blocks;
       // 关键：contextFor / buildContext 读的是存在文件上的 text，
       // 只改 blocks 的话识别结果永远送不到模型那儿
@@ -852,6 +852,8 @@ async function ocrScannedFiles({ project, cfg, stream, signal }) {
         ...(f.meta || {}),
         scanned: true,
         ocrPages: hit,
+        // 记下「哪几页的文字是 OCR 补上的」——只有这些页才不需要再发图片
+        ocrFilledPages: filledPages,
         ocrAt: new Date().toISOString(),
       };
       if (hit) {
@@ -894,11 +896,32 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
       ? []
       : await ocrScannedFiles({ project, cfg, stream, signal: controller.signal });
     if (ocrDone.length) persist(project);
-    // 注意要按「这份文件已经有识别出来的文字」来判断，不能只看这次有没有跑 OCR ——
-    // 第二次生成时 OCR 命中的是缓存，ocrDone 是空的，但图同样不该再发一遍。
-    const ocrIds = new Set(
-      (project.files || []).filter((f) => Number(f.meta?.ocrPages) > 0).map((f) => f.id),
-    );
+    /**
+     * 「哪些页的文字是 OCR 补上的」——**只有这些页**才不需要再发图片。
+     *
+     * 以前这里是按**文件**一刀切：只要这份文件 OCR 过，它的页面图就全部丢掉。
+     * 那个假设「OCR 过 = 文字齐了」对某些页不成立：投影片常见形态是
+     * 「标题是真文字、代码块 / 图表是截图」，这类页不是空白页，
+     * applyOcrToBlocks 一个字都不会写进去（尊重原文），图又被丢掉 ——
+     * 于是模型只看到标题，写出「课件没有给出具体内容」，而页面上明明印着整段代码。
+     *
+     * 注意要按「这份文件已经有识别出来的文字」来判断，不能只看这次有没有跑 OCR ——
+     * 第二次生成时 OCR 命中的是缓存，ocrDone 是空的，但那些页同样不该再发一遍图。
+     */
+    const ocrFilled = new Set();
+    for (const f of project.files || []) {
+      const stored = f.meta?.ocrFilledPages;
+      if (Array.isArray(stored)) {
+        for (const n of stored) ocrFilled.add(`${f.id}#${Number(n)}`);
+        continue;
+      }
+      // 老数据没有页码清单，就从 block 上的 ocr 标记反推（补过文字的 block 带 ocr:true）
+      for (const b of f.blocks || []) {
+        if (!b?.ocr) continue;
+        const n = Number(b.page ?? (String(b.label || '').match(/\d+/) || [])[0]);
+        if (n > 0) ocrFilled.add(`${f.id}#${n}`);
+      }
+    }
 
     const files = contextFor(project, cfg.maxInputChars);
     const hasVideo = project.files.some((f) => f.role === 'video');
@@ -945,9 +968,11 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
           mode: readMode,
           emit: (message) => stream.send({ type: 'stage-detail', stage: 'analysis', message }),
         });
-        // 刚识别过文字的扫描件不再发图 —— 内容已经在文字里了。
-        // 这正是「批量 OCR 而不是逐页截图」省下来的大头：原来 6 个阶段各发一遍图片。
-        pageImages = ocrIds.size ? r.images.filter((p) => !ocrIds.has(p.fileId)) : r.images;
+        // 文字确实是 OCR 补上的那几页不再发图（内容已经在文字里了）；其余的页照发 ——
+        // 按文件一刀切会漏掉「标题是真文字、正文是截图」的页。
+        pageImages = ocrFilled.size
+          ? r.images.filter((p) => !ocrFilled.has(`${p.fileId}#${Number(p.page)}`))
+          : r.images;
         if (r.total) {
           const skipped = r.images.length - pageImages.length;
           stream.send({
