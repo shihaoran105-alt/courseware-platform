@@ -13,15 +13,83 @@ export class AIError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 从模型输出里稳健地取出 JSON（容忍 ```json 包裹、前后废话、被截断） */
+/**
+ * 诊断回调：出错时把「模型到底返回了什么」交给外面。
+ *
+ * 服务端在启动时用 setDiagnosticSink() 接到落盘日志上；浏览器版不挂，
+ * 所以这个模块依然不依赖 node —— 它会被编译成 docs/engine/ai.js 给静态版用。
+ */
+let diagnosticSink = null;
+export function setDiagnosticSink(fn) {
+  diagnosticSink = typeof fn === 'function' ? fn : null;
+}
+function report(scope, payload) {
+  if (!diagnosticSink) return;
+  try {
+    diagnosticSink(scope, payload);
+  } catch {
+    /* 记日志本身失败，绝不能影响主流程 */
+  }
+}
+
+/**
+ * 给别的模块（尤其是 pipeline.mjs）用的诊断出口。
+ * pipeline 会把单个阶段的失败**内部消化**掉（塞进 result.errors），
+ * 路由层的 catch 根本收不到 —— 批量生成里「有 1 个环节没成功」就是这么来的，
+ * 以前既不落盘也不留痕。这里让阶段自己把失败报出来。
+ */
+export function reportDiagnostic(scope, err, extra = {}) {
+  report(scope, { ...extra, error: err });
+}
+
+/**
+ * 从模型输出里稳健地取出 JSON（容忍 ```json 包裹、前后废话、被截断）。
+ *
+ * 起点不能简单取「第一个 { 或 [」：模型偶尔会在正文里写中文方括号，
+ * 例如「LED 接 5V（[内部上拉] 那条）」—— 把那个 [ 当成数组起点，
+ * 就会报出莫名其妙的 `Unexpected token '内'`，完全看不出真正的问题（模型压根没写 JSON）。
+ * 所以两种起点都试一遍，**对象优先**（本平台所有阶段的 JSON 根都是对象）。
+ */
 export function extractJson(text) {
   if (!text || !text.trim()) throw new Error('模型返回了空内容');
-  let t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  const start = t.search(/[[{]/);
-  if (start < 0) throw new Error('模型返回中没有找到 JSON');
-  const open = t[start];
-  const close = open === '{' ? '}' : ']';
+  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
 
+  const anchors = [];
+  const bi = t.indexOf('{');
+  const si = t.indexOf('[');
+
+  /**
+   * 正文里连一个 { 都没有 = 模型没按要求写 JSON，而是把分析/推理过程写进了正文。
+   * 实测过一次：8000 token 全用在「Let me compute timer values…」上，最后被截断，
+   * 正文里只有一段英文推理 + 中文方括号。这种情况报
+   * 「Unexpected token '内'」毫无意义，直接把真实原因说出来。
+   */
+  const proseError = () =>
+    t.length > 120
+      ? new Error(
+          `模型没有返回 JSON，而是写了一大段说明/推理过程（正文 ${t.length} 字，里面找不到 {）。` +
+            `开头是：${t.slice(0, 60).replace(/\s+/g, ' ')}…`,
+        )
+      : new Error('模型返回中没有找到 JSON');
+
+  if (bi >= 0) anchors.push({ start: bi, open: '{', close: '}' });
+  if (si >= 0 && si !== bi) anchors.push({ start: si, open: '[', close: ']' });
+  if (!anchors.length) throw proseError();
+
+  let lastErr = null;
+  for (const a of anchors) {
+    try {
+      return parseFrom(t, a);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  // 只找到 [ 的那种，多半也是正文里的中文方括号（例如「LED 接 5V（[内部上拉]）」）
+  if (bi < 0) throw proseError();
+  throw lastErr || new Error('模型返回中没有找到 JSON');
+}
+
+function parseFrom(t, { start, open, close }) {
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -50,11 +118,109 @@ export function extractJson(text) {
   return JSON.parse(repairJson(t.slice(start)));
 }
 
+/**
+ * 读一段引号包起来的字符串，返回原文与结束位置。
+ * 两种引号都认 —— 模型经常整段用单引号写成 JSON5 的样子。
+ */
+function readQuoted(text, i, quote) {
+  let j = i + 1;
+  let esc = false;
+  while (j < text.length) {
+    const d = text[j];
+    if (esc) esc = false;
+    else if (d === '\\') esc = true;
+    else if (d === quote) {
+      j++;
+      break;
+    }
+    j++;
+  }
+  return { raw: text.slice(i, j), end: j, closed: j <= text.length && text[j - 1] === quote && j - 1 > i };
+}
+
+/** 把单引号字符串转成合法的双引号 JSON 字符串（内部的 " 要转义，\' 要还原） */
+function singleToDouble(raw) {
+  const inner = raw.slice(1, raw.endsWith("'") && raw.length > 1 ? -1 : undefined);
+  let body = '';
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (c === '\\' && inner[i + 1] !== undefined) {
+      const n = inner[i + 1];
+      if (n === "'") {
+        body += "'";
+        i++;
+        continue;
+      }
+      if (n === '"') {
+        body += '\\"';
+        i++;
+        continue;
+      }
+      body += c + n; // \n \t \\ \uXXXX 之类原样保留
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      body += '\\"';
+      continue;
+    }
+    body += c;
+  }
+  return `"${body}"`;
+}
+
+/**
+ * 把 JSON 里的字符串逐个切出来，只对**字符串外**的骨架跑 fn，字符串原样保留。
+ *
+ * 为什么必须这么切：Lab 的 code 字段里全是 `void f(void) {` 这种花括号、
+ * 还有 `a ? b : c` 这种冒号。修补 JSON 的规则一旦作用到字符串里面，
+ * 就会把学生要用的代码改坏 —— 而这段代码恰恰是这个功能最值钱的东西。
+ *
+ * 顺带把单引号字符串统一换成双引号（JSON5 → JSON），这步也必须逐段做，
+ * 否则整段替换会连字符串里的内容一起动。
+ */
+function rebuildJsonTokens(text, fn) {
+  let out = '';
+  let buf = '';
+  const flush = () => {
+    if (buf) out += fn(buf);
+    buf = '';
+  };
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c !== '"' && c !== "'") {
+      buf += c;
+      i++;
+      continue;
+    }
+    flush();
+    const q = readQuoted(text, i, c);
+    out += c === '"' ? q.raw : singleToDouble(q.raw);
+    i = q.end;
+  }
+  flush();
+  return out;
+}
+
 function repairJson(s) {
   let out = s.replace(/,\s*$/, '');
   // 去掉尾部不完整的 `,"key":` 或 `"key":`
   out = out.replace(/,\s*"[^"]*"\s*:\s*$/, '').replace(/"[^"]*"\s*:\s*$/, '');
   out = out.replace(/,\s*$/, '');
+
+  // 模型时不时写成 JavaScript / JSON5 字面量的样子而不是严格 JSON。最常见的是
+  // **键名不加引号**，报错长这样：
+  //   Expected property name or '}' in JSON at position 6 (line 2 column 5)
+  //   ← 对应的内容就是 {\n    no: 1\n}
+  // 这些修补全在字符串外做，见 rebuildJsonTokens 的说明。
+  out = rebuildJsonTokens(out, (chunk) =>
+    chunk
+      // 1) 没加引号的键：紧跟 { 或 , 的标识符，后面接冒号
+      .replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)(\s*:)/g, '$1"$2"$3')
+      // 2) 尾随逗号：逗号后面直接就是 } 或 ]
+      .replace(/,(\s*[}\]])/g, '$1'),
+  );
 
   let inStr = false;
   let esc = false;
@@ -282,19 +448,121 @@ export async function complete(
   const read = async ({ body, model }) => {
     const res = await request(cfg, body, { signal, model });
     const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content ?? '';
-    return { content, usage: data?.usage || null };
+    const choice = data?.choices?.[0] || {};
+    const msg = choice.message || {};
+    let content = msg.content ?? '';
+    // 有些模型（视觉模型尤其）会把整个输出预算烧在内部推理上，正文留空、
+    // 全在 reasoning_content 里。**只有推理里确实写出了 JSON 才捞**：
+    // 纯推理（没有花括号）捞回来只会喂给 JSON 解析器一堆废话，
+    // 还会把「正文为空」这个信号盖掉，让下面的补救逻辑没机会跑。
+    const reasoning = msg.reasoning_content ?? msg.reasoning ?? '';
+    if (!String(content).trim() && /[[{]/.test(reasoning)) content = reasoning;
+    return {
+      content,
+      usage: data?.usage || null,
+      finish: choice.finish_reason || '',
+      hasReasoning: Boolean(reasoning),
+      // 给日志用：原始返回。没有正文时至少把推理留下 —— 不然只看到「空内容」，
+      // 根本不知道模型当时在干什么。
+      rawForLog: String(content || '').trim() ? content : reasoning,
+      model,
+    };
   };
 
   let imgs = images;
   // 图要一路退到 0 张，文字还要能继续折半，所以步子给够
   const MAX_SHRINK = 10;
+  // 输出被截断时的补救：一步步抬高 max_tokens（8000→16000→32000），最多两级。
+  // 日志里实测过：示例讲解那种（25 张图 + 长输出）抬到 16000 还是不够，
+  // 只给一次机会就等于没救。
+  const MAX_BUMPS = 2;
+  let bumpsDone = 0;
+  let prevTokens = null;
+  let imagesDropped = false;
+  const emptyError = (out, imgCount, tokens) =>
+    new AIError(
+      `模型返回了空内容（有 finish_reason 但没有正文）。这次带了 ${imgCount} 张图、max_tokens=${tokens}` +
+        `${out?.finish ? `、finish_reason=${out.finish}` : ''}` +
+        `${out?.hasReasoning ? '，看上去输出全用在内部推理上了' : ''}。` +
+        `已经试过抬高 max_tokens 和去掉图片两条路。可以点「重新生成本节」再试一次；` +
+        `如果总是这一节失败，可以在生成时把「读图」改成「纯文字」。`,
+      { retryable: true },
+    );
+
   for (let attempt = 0; ; attempt++) {
     const cur = spec(imgs);
     const bytes = bodyBytes(cur);
     try {
-      return await read(cur);
+      const out = await read(cur);
+
+      // finish_reason=length = 输出被 max_tokens 截断了。分两种情况，都要处理：
+      //   · 正文为空 → 模型把预算全烧在内部推理上，什么都没吐出来
+      //   · 正文非空 → 写到一半断了。extractJson 会把残缺 JSON「尽力修复」成能解析的，
+      //     于是变成**静默少内容**（Lab 少几个实验、讲解稿少几页），比报错还难发现。
+      // 两种都先试着多给点预算重来；这条不改图片，质量损失最小。
+      if (out.finish === 'length' && bumpsDone < MAX_BUMPS && maxTokens < 32000) {
+        bumpsDone += 1;
+        prevTokens = maxTokens;
+        maxTokens = Math.min(32000, maxTokens * 2);
+        console.warn(
+          `[truncated] 输出被 max_tokens=${prevTokens} 截断（正文 ${String(out.content || '').length} 字），` +
+            `抬到 ${maxTokens} 重试（第 ${bumpsDone}/${MAX_BUMPS} 级）` +
+            `${String(out.content || '').trim() ? '，避免只拿到残缺内容' : ''}`,
+        );
+        continue;
+      }
+      if (String(out.content || '').trim() && out.finish === 'length') {
+        // 预算已经给到顶还是被截断：只能收下这份残缺内容，但必须留痕
+        console.warn(
+          `[truncated] max_tokens=${maxTokens} 仍然截断，JSON 可能不完整（已被修复逻辑兜住，内容可能缺）`,
+        );
+        report('ai.truncated', {
+          error: `输出被 max_tokens=${maxTokens} 截断`,
+          model: out.model || cfg.model,
+          finish_reason: out.finish,
+          raw: out.rawForLog,
+        });
+      }
+      if (String(out.content || '').trim()) return out;
+
+      // ---------- 正文为空：视觉模型带图 + 要求 JSON 时最容易发生 ----------
+      // 注意：finish_reason=length 的那种，上面「截断」分支已经抬过预算了
+      // （bumpsDone 已经用满），走到这里说明抬预算也没救回来。
+      const count = Array.isArray(imgs) ? imgs.length : 0;
+
+      // 把模型这次的真实状态交给日志，别只留一句「空内容」
+      report('ai.empty', {
+        error: out.finish ? `finish_reason=${out.finish}` : '空正文',
+        model: out.model || cfg.model,
+        visionModel: imgs && imgs.length ? cfg.visionModel || 'deepseek-flash' : '',
+        images: Array.isArray(imgs) ? imgs.length : 0,
+        maxTokens,
+        hasReasoning: out.hasReasoning ? 'yes' : 'no',
+        raw: out.rawForLog || '（模型连 reasoning 都没给）',
+      });
+      // 去掉图片：思维导图那次就是这个结论 —— 只发文字立刻正常
+      if (count > 0 && !imagesDropped) {
+        imagesDropped = true;
+        console.warn(`[empty] 正文为空，去掉 ${count} 张图只发文字重试`);
+        imgs = [];
+        continue;
+      }
+      throw emptyError(out, count, maxTokens);
     } catch (err) {
+      if (err instanceof AIError && err.retryable) throw err;
+      // 抬高 max_tokens 之后被接口拒了（有些服务商的输出上限比 32000 低得多）：
+      // 退回原来的值，改走去掉图片那条路，别让整节就此失败
+      const badParam = err?.status === 400 || err?.status === 422;
+      if (badParam && bumpsDone > 0 && prevTokens !== null && maxTokens !== prevTokens) {
+        console.warn(`[empty] 抬高后的 max_tokens=${maxTokens} 被接口拒绝，退回 ${prevTokens}，改试去掉图片`);
+        maxTokens = prevTokens;
+        bumpsDone = MAX_BUMPS; // 别再往上试了，接口不认
+        if (!imagesDropped && Array.isArray(imgs) && imgs.length) {
+          imagesDropped = true;
+          imgs = [];
+          continue;
+        }
+      }
       if (!shouldShrinkImages(err)) {
         // 有些第三方 OpenAI 兼容接口不支持 response_format，降级重试一次（提示词里已经要求输出 JSON）
         const unsupported = err?.status === 400 || err?.status === 404 || err?.status === 422;
@@ -345,7 +613,7 @@ export async function complete(
  * 让模型按用户选的界面语言产出内容。
  *
  * 挂在这里而不是逐个改提示词：completeJSON / stream 是唯一的出口，
- * 改一处所有阶段（分析 / 事例 / 讲稿 / 出题 / Lab / 精讲 / 问答）一起生效。
+ * 改一处所有阶段（分析 / 示例 / 讲稿 / 出题 / Lab / 精讲 / 问答）一起生效。
  */
 export function withLang(system = '', lang = 'zh') {
   if (lang !== 'en') return system;
@@ -368,8 +636,10 @@ export async function completeJSON(
 ) {
   system = withLang(system, cfg?.lang || 'zh');
   let lastErr = null;
+  let lastRaw = '';
+  let lastFinish = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const { content, usage } = await complete(cfg, {
+    const { content, usage, finish } = await complete(cfg, {
       system,
       user,
       images,
@@ -378,6 +648,8 @@ export async function completeJSON(
       json: true,
       signal,
     });
+    lastRaw = content;
+    lastFinish = finish || '';
     try {
       return { data: extractJson(content), usage };
     } catch (err) {
@@ -388,7 +660,22 @@ export async function completeJSON(
       }
     }
   }
-  throw new AIError(`模型返回的 JSON 无法解析（${lastErr?.message || '未知原因'}）。可以点「重新生成本节」再试一次。`);
+  // 把模型**原始返回**交给日志。只报「JSON 无法解析」，用户和我们都不知道模型写了什么；
+  // 而同一个报错坐标能对应七八种畸形（没引号的键、省略号占位、注释、代码围栏…），
+  // 不给原文就只能一轮轮猜。落盘之后打开日志文件就一眼看到。
+  report('ai.json', {
+    error: lastErr,
+    model: cfg?.model,
+    visionModel: images && images.length ? cfg?.visionModel || 'deepseek-flash' : '',
+    images: Array.isArray(images) ? images.length : 0,
+    finish_reason: lastFinish || '（未返回）',
+    attempt: retries + 1,
+    raw: lastRaw,
+  });
+  throw new AIError(
+    `模型返回的 JSON 无法解析（${lastErr?.message || '未知原因'}）。可以点「重新生成本节」再试一次。` +
+      `（模型原始返回已写入日志：设置 → 查看日志，或看 data/logs/ 下的文件）`,
+  );
 }
 
 /** 流式输出，逐段回调 */

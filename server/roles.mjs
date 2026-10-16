@@ -74,7 +74,7 @@ export const ROLE_CATALOG = [
     labelEn: 'Courseware',
     desc: '讲义、PPT、教材章节。作为讲解的主体和「课件原文」的来源。',
     descEn: 'Slides, handouts, textbook chapters. The main subject of the explanation and the source of quoted courseware text.',
-    feeds: '课件分析 · 事例讲解 · 学习规划 · 逐页讲解 · 总结分析 · 课件原文截图',
+    feeds: '课件分析 · 示例讲解 · 学习规划 · 逐页讲解 · 总结分析 · 课件原文截图',
     feedsEn: 'Analysis · Worked examples · Study plan · Narration · Study notes · Courseware screenshots',
   },
   {

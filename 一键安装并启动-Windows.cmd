@@ -68,12 +68,15 @@ if errorlevel 1 (
 echo.
 
 echo 正在启动平台...
-echo 网址：http://127.0.0.1:4173
+echo 本机访问：http://127.0.0.1:4173
+echo 同一局域网 / Tailscale：http://本机IP:4173
 echo 请保持本窗口打开；按 Ctrl+C 可停止服务。
 echo.
 
 start "" /b powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:4173'"
-set "HOST=127.0.0.1"
+rem 绑 0.0.0.0 才能被局域网 / Tailscale 访问；
+rem 安全性由平台自己的「访问口令」负责，不要只靠 127.0.0.1 挡着。
+if not defined HOST set "HOST=0.0.0.0"
 if not defined PORT set "PORT=4173"
 node server\index.mjs
 if errorlevel 1 goto :failed

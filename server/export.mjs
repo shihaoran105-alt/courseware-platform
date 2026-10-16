@@ -42,7 +42,7 @@ export function toMarkdown(project) {
 
   const ex = a.examples;
   if (ex) {
-    push('## 二、事例讲解', '');
+    push('## 二、示例讲解', '');
     if (ex.examples?.length) {
       for (const e of ex.examples) {
         push(`### ${e.id ? `${e.id}. ` : ''}${e.title}`, '');

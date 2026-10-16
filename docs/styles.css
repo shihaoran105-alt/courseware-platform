@@ -654,6 +654,36 @@ ul.clean li::marker { color: var(--ink-4); }
   padding: 12px 15px; margin-top: 14px; font-size: 13.5px; line-height: 1.75;
 }
 .answer b { color: var(--ok); margin-right: 6px; }
+
+/* ---- 示例讲解：出处标注 / 思路 / 折叠的答案 ---- */
+.ex-source {
+  margin: 0 0 12px; padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--brand-soft); border: 1px solid var(--brand-line);
+  font-size: 12.5px; line-height: 1.7;
+}
+.ex-source .lbl {
+  display: inline-block; font-weight: 700; color: var(--brand-2);
+  margin-right: 8px;
+}
+.ex-source-where { display: inline; color: var(--ink); font-weight: 600; }
+.ex-source-quote {
+  margin-top: 6px; padding-left: 10px; border-left: 2px solid var(--brand-line);
+  color: var(--ink-3); font-style: italic;
+}
+.ex-thinking {
+  margin-top: 12px; padding: 11px 14px; border-radius: var(--radius-sm);
+  background: var(--teal-soft); border: 1px solid var(--teal-line);
+  font-size: 13.5px; line-height: 1.8; color: var(--ink);
+}
+.ex-thinking b { display: block; color: var(--teal); margin-bottom: 5px; font-weight: 700; }
+.ex-answer { margin-top: 14px; }
+.ex-answer-body { margin-top: 10px; }
+.ex-answer-body .answer { margin-top: 0; }
+.ex-answer-src { margin-top: 7px; font-size: 12px; color: var(--ink-3); }
+[data-theme='dark'] .ex-source { background: rgba(61, 95, 153, .16); border-color: rgba(61, 95, 153, .42); }
+[data-theme='dark'] .ex-source .lbl { color: #9db4dd; }
+[data-theme='dark'] .ex-thinking { background: rgba(15, 110, 110, .16); border-color: rgba(15, 110, 110, .42); color: #e6ecf5; }
+[data-theme='dark'] .ex-thinking b { color: #4fd1c5; }
 .note-box {
   background: var(--warn-soft); border: 1px solid var(--warn-line); border-radius: var(--radius);
   padding: 12px 15px; margin-top: 12px; font-size: 13px; line-height: 1.75;
@@ -951,6 +981,8 @@ ul.clean li::marker { color: var(--ink-4); }
 
 /* 进度里被跳过的阶段 */
 .stage-row.skipped { opacity: .5; }
+.stage-row.kept .mark { color: var(--ink-3); }
+.stage-row.kept .lbl { color: var(--ink-2); }
 .stage-row.skipped .lbl { text-decoration: line-through; }
 
 /* 轻量输入框（新建项目 / 新建分组） */
@@ -1261,6 +1293,41 @@ ul.clean li::marker { color: var(--ink-4); }
 .step-expected b { color: var(--teal); margin-right: 6px; font-weight: 650; }
 .step-tip { background: var(--warn-soft); border: 1px solid var(--warn-line); }
 .step-tip b { color: var(--warn); margin-right: 6px; font-weight: 650; }
+
+/* 每一步的答案：用 ok 绿，和「预期结果（青）」「提示（黄）」区分开，一眼能找到 */
+.step-answer {
+  margin-top: 8px; font-size: 13px; line-height: 1.8; padding: 9px 12px;
+  border-radius: var(--radius-sm); color: var(--ink);
+  background: var(--ok-soft); border: 1px solid var(--ok-line);
+  white-space: pre-wrap; font-weight: 500;
+}
+.step-answer b { color: var(--ok); margin-right: 6px; font-weight: 700; }
+.lab-step.done .step-answer { opacity: .82; }
+
+/* 代码答案：单独一块，等宽字体、可横向滚动、带复制按钮 */
+.step-code {
+  margin-top: 8px; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  background: var(--surface-2); overflow: hidden;
+}
+.step-code-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.step-code-head b { font-size: 12.5px; font-weight: 650; color: var(--ink-2); }
+.step-code-head .tag { font-size: 11px; }
+.step-code pre {
+  margin: 0; padding: 11px 13px; overflow-x: auto;
+  font-size: 12.5px; line-height: 1.72;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ink); tab-size: 2;
+}
+.step-code pre code { background: none; padding: 0; font-family: inherit; white-space: pre; }
+[data-theme='dark'] .step-code { background: #0f141d; border-color: #263042; }
+[data-theme='dark'] .step-code-head { background: #141b26; border-color: #263042; }
+[data-theme='dark'] .step-code pre { color: #dbe3f0; }
+[data-theme='dark'] .step-answer { color: #e6ecf5; background: rgba(15, 122, 85, .15); border-color: rgba(15, 122, 85, .4); }
+[data-theme='dark'] .step-answer b { color: #4fd1a0; }
 
 .record-list { display: flex; flex-direction: column; gap: 13px; }
 .record-row label {

@@ -11,6 +11,18 @@ const IS_STATIC = typeof window !== 'undefined' && window.CW_STATIC === true;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+/**
+ * 这个键盘事件是不是发生在「正在打字」的地方（输入框 / 文本域 / 可编辑区）。
+ * 全局快捷键必须先问这一句：否则在问答框里敲空格会变成翻页、敲字母 f 会被
+ * 当成全屏快捷键抢走，字反而打不进去。
+ */
+function isTypingTarget(target) {
+  const el = target instanceof Element ? target : null;
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+}
+
 /* 访客自己的 API 配置只存在浏览器 localStorage，随请求发给服务器用完即弃 */
 const LS = {
   key: 'cw_api_key',
@@ -107,17 +119,201 @@ function stripBold(s) {
 }
 
 /**
- * AI 问答专用：把 ** 和 $ 全部去掉。
+ * LaTeX 命令 → 能直接读的普通文字。
  *
- * 问答区不渲染数学公式，模型却习惯用 $…$ / $$…$$ 写 LaTeX，用户看到的就是一串
- * 光秃秃的美元符号。** 同理 —— 虽然 mdToHtml 能把它渲染成加粗，但需求是「一个
- * 标记都不留」，所以这里直接抹掉。
+ * 问答区不渲染数学公式，但模型习惯用 $…$ / $$…$$ 写 LaTeX。以前只是把 $ 抹掉，
+ * 结果 \frac{}{}、\text{}、\times 这些命令原样留在那里，一堆反斜杠和花括号，
+ * 根本没法读。这里把常见命令翻成正常写法（希腊字母、运算符用 Unicode，
+ * \frac 变成 a / b），剩下的花括号和反斜杠一并收干净。
+ *
+ * 只处理「数学区间内部」的内容。区间外的反斜杠是正经东西 —— 实测真实回答里
+ * 区间外唯一的反斜杠命令，全是代码块里的 Windows 路径
+ * （C:\Users\haoranshi\AppData\Local\...），无差别地删 \命令 会把这些路径毁掉。
+ */
+
+/** 命令 → Unicode 符号 */
+const TEX_SYM = {
+  times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', ast: '∗', circ: '∘', bullet: '•',
+  le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠',
+  approx: '≈', sim: '∼', simeq: '≃', equiv: '≡', propto: '∝', ll: '≪', gg: '≫',
+  to: '→', rightarrow: '→', Rightarrow: '⇒', leftarrow: '←', Leftarrow: '⇐',
+  leftrightarrow: '↔', mapsto: '↦', implies: '⟹', iff: '⟺',
+  in: '∈', notin: '∉', ni: '∋', subset: '⊂', subseteq: '⊆', supset: '⊃', supseteq: '⊇',
+  cup: '∪', cap: '∩', emptyset: '∅', varnothing: '∅', forall: '∀', exists: '∃',
+  neg: '¬', lnot: '¬', land: '∧', lor: '∨', therefore: '∴', because: '∵',
+  sum: '∑', prod: '∏', int: '∫', oint: '∮', partial: '∂', nabla: '∇', infty: '∞',
+  ldots: '…', cdots: '⋯', dots: '…', vdots: '⋮', ddots: '⋱',
+  angle: '∠', perp: '⊥', parallel: '∥', triangle: '△', square: '□',
+  hbar: 'ℏ', ell: 'ℓ', aleph: 'ℵ', degree: '°', prime: '′',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', omicron: 'ο', pi: 'π', varpi: 'ϖ',
+  rho: 'ρ', varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ',
+  phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+  // 转义的字面符号
+  '%': '%', '&': '&', '#': '#', '_': '_', '{': '{', '}': '}', '$': '$', ' ': ' ',
+};
+/** 函数名：去掉反斜杠就行 */
+const TEX_FUNC = new Set([
+  'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'arcsin', 'arccos', 'arctan',
+  'sinh', 'cosh', 'tanh', 'coth', 'exp', 'log', 'ln', 'lg', 'lim', 'max', 'min',
+  'sup', 'inf', 'det', 'dim', 'ker', 'deg', 'gcd', 'lcm', 'mod', 'bmod',
+]);
+/** 这些命令的花括号里是普通文字，原样留内容 */
+const TEX_TEXTY = new Set([
+  'text', 'textrm', 'textsf', 'texttt', 'textnormal', 'mathrm', 'mathbf',
+  'mathit', 'mathsf', 'mathtt', 'mathbb', 'mathcal', 'mathscr', 'operatorname',
+  'mbox', 'hbox', 'displaystyle', 'textstyle', 'scriptstyle',
+]);
+/** 分式家族 */
+const TEX_FRAC = new Set(['frac', 'dfrac', 'tfrac', 'cfrac']);
+/** 只是间距，直接丢掉（单个字符的 \, \; \: 在下面单独处理） */
+const TEX_SPACE = new Set(['quad', 'qquad', 'thinspace', 'enspace', 'negthinspace']);
+
+function texToText(src) {
+  const conv = (text, depth) => {
+    if (depth > 12 || !text) return text;
+
+    /** 从 '{' 开始读一段配对的花括号，返回内容和结束位置 */
+    const group = (pos) => {
+      if (text[pos] !== '{') return null;
+      let d = 0;
+      for (let j = pos; j < text.length; j++) {
+        const c = text[j];
+        if (c === '\\') { j++; continue; }
+        if (c === '{') d++;
+        else if (c === '}') { d--; if (!d) return { body: text.slice(pos + 1, j), end: j + 1 }; }
+      }
+      return { body: text.slice(pos + 1), end: text.length }; // 括号没配平就吃到尾
+    };
+
+    let out = '';
+    let k = 0;
+    while (k < text.length) {
+      const c = text[k];
+
+      if (c === '\\') {
+        const m = /^\\([a-zA-Z]+)/.exec(text.slice(k));
+        if (m) {
+          const name = m[1];
+          let p = k + m[0].length;
+          // \frac{a}{b} → (a) / (b)
+          if (TEX_FRAC.has(name)) {
+            const g1 = group(p);
+            if (g1) {
+              const g2 = group(g1.end);
+              const a = conv(g1.body, depth + 1);
+              if (g2) { out += `(${a}) / (${conv(g2.body, depth + 1)})`; k = g2.end; continue; }
+              out += `(${a})`; k = g1.end; continue;
+            }
+          }
+          // \sqrt{x} → √(x)，\sqrt[n]{x} → √[n](x)
+          if (name === 'sqrt') {
+            let opt = '';
+            const br = /^\[([^\]]*)\]/.exec(text.slice(p));
+            if (br) { opt = `[${conv(br[1], depth + 1)}]`; p += br[0].length; }
+            const g = group(p);
+            if (g) { out += `√${opt}(${conv(g.body, depth + 1)})`; k = g.end; continue; }
+            out += '√'; k = p; continue;
+          }
+          // \text{...} 之类：留着里面的字
+          if (TEX_TEXTY.has(name)) {
+            const g = group(p);
+            if (g) { out += conv(g.body, depth + 1); k = g.end; continue; }
+            k = p; continue;
+          }
+          if (TEX_SPACE.has(name)) { out += ' '; k = p; continue; }
+          if (TEX_SYM[name] !== undefined) { out += TEX_SYM[name]; k = p; continue; }
+          if (TEX_FUNC.has(name)) { out += name; k = p; continue; }
+          // \left( \right) \big 之类：只留后面的括号/内容
+          if (name === 'left' || name === 'right' || name === 'big' || name === 'Big' ||
+              name === 'bigg' || name === 'Bigg' || name === 'limits' || name === 'nolimits') {
+            k = p; continue;
+          }
+          // \begin{matrix} / \end{matrix}：整个环境名一起吃掉，别把 bmatrix 当文字留下
+          if (name === 'begin' || name === 'end') {
+            const g = group(p);
+            k = g ? g.end : p;
+            out += '\n';
+            continue;
+          }
+          k = p; continue; // 不认识的命令：连反斜杠一起丢掉，别留下 \xxx
+        }
+        // 非字母的单字符命令
+        const two = text.slice(k, k + 2);
+        if (two === '\\\\') { out += '\n'; k += 2; continue; }
+        const nx = text[k + 1];
+        const sym = TEX_SYM[nx];
+        if (sym !== undefined) { out += sym; k += 2; continue; }
+        // \, \; \: 是「细空格」：16\,000\,000 这种数字分组要保留，别糊成 16000000
+        if (nx === ',' || nx === ';' || nx === ':') { out += ' '; k += 2; continue; }
+        k += 2; // \! \' \" 之类：丢掉
+        continue;
+      }
+
+      if (c === '{' || c === '}') { k++; continue; } // 花括号只是分组，不显示
+
+      if (c === '^' || c === '_') {
+        const nxt = text[k + 1];
+        if (nxt === '{') {
+          const g = group(k + 1);
+          if (g) { out += c + conv(g.body, depth + 1); k = g.end; continue; }
+        }
+        if (nxt !== undefined) { out += c + nxt; k += 2; continue; }
+      }
+
+      out += c;
+      k++;
+    }
+    return out;
+  };
+
+  return conv(String(src ?? ''), 0)
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * AI 问答专用：把 ** 去掉，并把 $…$ 里的 LaTeX 拍成普通文字。
+ *
+ * ** 同理 —— 虽然 mdToHtml 能把它渲染成加粗，但需求是「一个标记都不留」，
+ * 所以这里直接抹掉。
  *
  * 只用在问答（课件问答 / 右侧 AI 咨询）。课件分析那些面板里的 $0000、$FF 是
  * AVR / 8086 的十六进制写法，有实际含义，不能一起抹掉。
  */
 function stripAiMarks(s) {
-  return stripBold(s).replace(/\$/g, '');
+  let t = stripBold(String(s ?? ''));
+
+  // 先把代码摘出来：里面的 $（shell 变量）和反斜杠（Windows 路径）都不能动
+  const kept = [];
+  t = t.replace(/```[\s\S]*?```|`[^`\n]*`/g, (m) => {
+    kept.push(m);
+    return `\u0000K${kept.length - 1}\u0000`;
+  });
+
+  // 只翻数学区间里的内容；$$ 要排在 $ 前面，否则会先被单个 $ 匹配掉。
+  // 首尾空白要原样保留：AVR 那种「把 $FF 写到 $FFFF」的写法会被当成一段行内公式，
+  // 不保留的话两个 $ 中间的空格会被吃掉，变成「写到$FFFF」。
+  const keepEdge = (body) => {
+    const lead = /^\s*/.exec(body)[0];
+    const trail = /\s*$/.exec(body)[0];
+    return lead + texToText(body) + trail;
+  };
+  t = t
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_m, body) => keepEdge(body))
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_m, body) => keepEdge(body))
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_m, body) => keepEdge(body))
+    .replace(/\$([^$\n]{1,300}?)\$/g, (_m, body) => keepEdge(body));
+
+  // 剩下的落单 $ 还是没有意义的标记，照旧抹掉（保持原有行为）
+  t = t.replace(/\$/g, '');
+
+  return t.replace(/\u0000K(\d+)\u0000/g, (_m, i) => kept[+i]);
 }
 
 /** 极简 Markdown → HTML（先转义，保证安全） */
@@ -259,7 +455,53 @@ function apiError(message, status, data = {}) {
   const err = new Error(message || `请求失败（${status}）`);
   err.status = status;
   err.needsKey = Boolean(data.needsKey);
+  err.needPassword = Boolean(data.needPassword);
   return err;
+}
+
+/**
+ * 服务器设了访问口令，先请用户过门。
+ * 只弹一次（state.passOpen），否则每个失败的请求都会再弹一遍。
+ */
+function openPassGate(reason = '') {
+  // 看 DOM 里在不在，而不是记状态位：用户手动关掉之后还能再弹出来
+  if ($('#passGate')) return;
+  openModal(
+    `
+    <div class="gate" id="passGate">
+      <div class="gate-icon">${icon('lock', 22)}</div>
+      <h3>这台服务器需要访问口令</h3>
+      <p class="hint">
+        ${reason ? `<b style="color:var(--warn)">${esc(reason)}</b><br>` : ''}
+        服务器主人给它设了一道门。口令只用来换一张通行证存在你自己的浏览器里，不会上传到别处。
+      </p>
+      <div class="field">
+        <label>访问口令</label>
+        <input type="password" id="passInput" placeholder="请输入访问口令" autocomplete="current-password">
+      </div>
+      <div id="passErr"></div>
+      <div class="modal-actions">
+        <button class="btn primary" id="passGo">进入</button>
+      </div>
+    </div>`,
+  );
+  const go = async () => {
+    const v = $('#passInput')?.value || '';
+    const errBox = $('#passErr');
+    if (!v.trim()) return;
+    try {
+      await api('/api/access', { method: 'POST', body: JSON.stringify({ password: v }) });
+      closeModal();
+      location.reload();
+    } catch (e) {
+      if (errBox) errBox.innerHTML = `<p class="hint" style="color:var(--danger)">${esc(e.message)}</p>`;
+    }
+  };
+  $('#passGo')?.addEventListener('click', go);
+  $('#passInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') go();
+  });
+  setTimeout(() => $('#passInput')?.focus(), 60);
 }
 
 async function api(path, options = {}) {
@@ -274,7 +516,8 @@ async function api(path, options = {}) {
   }
   if (!res.ok) {
     const err = apiError(data.error, res.status, data);
-    if (err.needsKey) openGate('需要 API Key 才能使用这个功能');
+    if (err.needPassword) openPassGate('请先输入访问口令');
+    else if (err.needsKey) openGate('需要 API Key 才能使用这个功能');
     throw err;
   }
   return data;
@@ -840,7 +1083,7 @@ function syncView() {
 const TABS = [
   { id: 'overview', label: '课件分析', icon: 'chart' },
   { id: 'combine', label: '结合课件讲解', icon: 'wand' },
-  { id: 'examples', label: '事例讲解', icon: 'bulb' },
+  { id: 'examples', label: '示例讲解', icon: 'bulb' },
   { id: 'guide', label: '学习规划', icon: 'compass' },
   { id: 'narration', label: '逐页讲解', icon: 'mic' },
   { id: 'summary', label: '总结分析', icon: 'layers' },
@@ -1154,7 +1397,7 @@ function roleCatalog() {
   if (fromCfg.length) return fromCfg;
   // 兜底：拿不到就用内置的一份，保证面板永远能打开
   return [
-    { role: 'courseware', label: '课件', desc: '讲义、PPT、教材章节。', feeds: '课件分析 · 事例讲解 · 学习规划 · 逐页讲解' },
+    { role: 'courseware', label: '课件', desc: '讲义、PPT、教材章节。', feeds: '课件分析 · 示例讲解 · 学习规划 · 逐页讲解' },
     { role: 'lab', label: '实验指导', desc: '实验手册、Lab sheet。', feeds: '做 Lab · 结合课件讲解' },
     { role: 'exercise', label: '习题 / 作业', desc: 'Tutorial、Assignment、Past paper。', feeds: '做题 · 结合课件讲解' },
     { role: 'solution', label: '标准答案', desc: '老师发的答案册 / 题解。', feeds: '结合课件讲解（权威依据）' },
@@ -1639,7 +1882,7 @@ function renderBody() {
         <ol>
           <li>把课件文件拖进左侧上传区</li>
           <li>点击「开始讲解分析」</li>
-          <li>得到 <b>课件分析</b>、<b>事例讲解</b>、<b>学习规划</b>、<b>逐页讲解</b>、<b>总结分析</b>、<b>练习题</b>、<b>实验（Lab）</b></li>
+          <li>得到 <b>课件分析</b>、<b>示例讲解</b>、<b>学习规划</b>、<b>逐页讲解</b>、<b>总结分析</b>、<b>练习题</b>、<b>实验（Lab）</b></li>
           <li>用「全屏讲解模式」边看页面边听讲解；可以在「做题」「做 lab」里直接作答并得到批改</li>
           <li>导出 Markdown 存成自己的笔记</li>
         </ol>
@@ -1652,7 +1895,7 @@ function renderBody() {
         <div class="big">${icon('checkCircle', 46)}</div>
         <h2>已就绪：${state.project.files.length} 个文件</h2>
         <p>共提取到 ${state.project.files.reduce((n, f) => n + (f.chars || 0), 0).toLocaleString()} 字内容。</p>
-        <p>点击左下角 <b>「开始讲解分析」</b>，我会读完整份课件，产出内容分析、事例讲解、学习规划和逐页讲解稿。</p>
+        <p>点击左下角 <b>「开始讲解分析」</b>，我会读完整份课件，产出内容分析、示例讲解、学习规划和逐页讲解稿。</p>
       </div>`;
     return;
   }
@@ -1750,6 +1993,7 @@ function renderBody() {
   }
 
   if (state.tab === 'narration') wireNarration();
+  else if (state.tab === 'examples') wireExamples();
   else if (state.tab === 'mindmap') wireMindmapTools();
   else if (state.tab === 'combine') wireCombine();
   else if (state.tab === 'quiz') wireQuiz();
@@ -1801,7 +2045,7 @@ function renderProgress() {
   $('#tabBody').innerHTML = `
     <div class="progress-wrap">
       <h2 style="margin:0 0 6px;font-size:19px">正在读你的课件…${state.passLabel ? `<span class="pass-tag">${esc(state.passLabel)}</span>` : ''}</h2>
-      <p style="color:var(--text-2);margin:0 0 4px">模型正在逐段分析内容、挑出事例、设计教学用法并撰写讲解稿，通常需要 1–3 分钟。</p>
+      <p style="color:var(--text-2);margin:0 0 4px">模型正在逐段分析内容、挑出示例、设计教学用法并撰写讲解稿，通常需要 1–3 分钟。</p>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div style="text-align:right;font-size:12px;color:var(--text-3);margin-top:6px">${pct}%</div>
       <div class="stage-list">
@@ -1816,7 +2060,9 @@ function renderProgress() {
                     ? 'error'
                     : s.status === 'skipped'
                       ? 'skipped'
-                      : '';
+                      : s.status === 'kept'
+                        ? 'kept'
+                        : '';
             const mark =
               s.status === 'start'
                 ? '<span class="spin"></span>'
@@ -1826,8 +2072,12 @@ function renderProgress() {
                     ? '!'
                     : s.status === 'skipped'
                       ? '—'
-                      : '·';
-            const sub = s.detail || (s.status === 'error' || s.status === 'skipped' ? s.message : '');
+                      : s.status === 'kept'
+                        ? icon('check', 13)
+                        : '·';
+            const sub =
+              s.detail ||
+              (s.status === 'error' || s.status === 'skipped' || s.status === 'kept' ? s.message : '');
             return `<div class="stage-row ${cls}">
               <span class="mark">${mark}</span>
               <div><div class="lbl">${esc(s.label)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
@@ -1847,7 +2097,7 @@ function stageCatalog() {
   if (fromShape.length) return fromShape;
   return [
     { key: 'analysis', label: '课件分析', desc: '通读材料，讲清结构、重点难点，列出核心概念。' },
-    { key: 'examples', label: '事例讲解', desc: '把例题、案例拆成题目 → 分步 → 通用方法 → 易错点。' },
+    { key: 'examples', label: '示例讲解', desc: '优先找课件里的 exercise，没有就找课件提到的例子；讲思路、答案折叠、标注出处。' },
     { key: 'guide', label: '学习规划', desc: '给学习者一份学习规划：先学什么、每部分花多久、怎么自测。' },
     { key: 'narration', label: '逐页讲解稿', desc: '每一页写一段可以照着念的讲稿。' },
     { key: 'summary', label: '总结分析', desc: '抛开课件结构，把知识点重新梳理一遍。' },
@@ -2093,7 +2343,7 @@ function openAnalyzeModal() {
           `${icon('alert', 12)} 有 <b>${todo.length}</b> 份材料是扫描件（没有文字层）：` +
           `<b>${todo.map((x) => esc(x.name)).join('、')}</b>，共约 <b>${n}</b> 页。` +
           `生成时会先用视觉模型把这些页的文字<b>批量识别</b>出来（一次跑完，只做一次并缓存），` +
-          `之后分析 / 事例 / 规划 / 总结 / 题 / Lab 全部读文字，不再反复发图片。` +
+          `之后分析 / 示例 / 规划 / 总结 / 题 / Lab 全部读文字，不再反复发图片。` +
           `已经识别过的扫描件会直接复用缓存，不重复花钱。`;
         return;
       }
@@ -2362,54 +2612,71 @@ async function transcribeVideo() {
   }
 }
 
-/* --------------------------- 2. 事例讲解 --------------------------- */
+/* --------------------------- 2. 示例讲解 --------------------------- */
 
 function renderExamples(ex) {
-  if (!ex) return `<div class="note-box">事例讲解没有生成成功，可以重试。</div>`;
+  if (!ex) return `<div class="note-box">示例讲解没有生成成功，可以重试。</div>`;
   const examples = arr(ex.examples);
   if (!examples.length) {
-    return `<div class="card"><h3>事例讲解</h3><p style="color:var(--text-2)">${esc(ex.noExampleNote || '课件中未发现例题或案例。')}</p></div>`;
+    return `<div class="card"><h3>示例讲解</h3><p style="color:var(--text-2)">${esc(ex.noExampleNote || '课件里没有找到 exercise，也没有找到提到的例子。')}</p></div>`;
   }
+  const found = ex.found || {};
   return (
     `<div class="card" style="margin-bottom:18px">
-      <h3>共找到 ${examples.length} 个可讲的事例</h3>
-      <p style="margin:0;color:var(--text-2);font-size:13.5px">每个事例都拆成了「题目 → 分步讲解 → 通用方法 → 易错点 → 回顾」，可以照着一步步学。</p>
+      <h3>共找到 ${examples.length} 个可讲的示例</h3>
+      <p style="margin:0;color:var(--text-2);font-size:13.5px">优先找课件里的 exercise，没有就找课件提到的例子。每条都标了出自哪份文件、第几页、哪一段；先自己看思路，答案折叠着，想好了再点开对。</p>
+      ${found.note ? `<p style="margin:8px 0 0;color:var(--text-3);font-size:12.5px">${esc(found.note)}</p>` : ''}
     </div>` +
     examples
       .map((e, i) => {
-        // 整个事例可拖进右侧 AI 咨询
+        const fi = e.foundIn || {};
+        // 整条示例可拖进右侧 AI 咨询
         const d = dnd({
-          title: `事例 ${e.id ?? i + 1}：${String(e.title || '').slice(0, 50)}`,
-          source: ['事例讲解', e.location].filter(Boolean).join(' · '),
+          title: `示例 ${e.id ?? i + 1}：${String(e.title || '').slice(0, 50)}`,
+          source: ['示例讲解', fi.file, fi.page].filter(Boolean).join(' · '),
           text: [
             e.title ? `标题：${e.title}` : '',
+            fi.file || fi.page ? `出处：${[fi.file, fi.page, fi.section].filter(Boolean).join(' · ')}` : '',
+            fi.quote ? `原文：${fi.quote}` : '',
             e.context ? `情境：${e.context}` : '',
             e.stem ? `题目：${e.stem}` : '',
+            e.thinking ? `思路：${e.thinking}` : '',
             arr(e.steps).length ? `讲解步骤：\n${e.steps.map((s, si) => `${si + 1}. ${s.title}：${s.detail}`).join('\n')}` : '',
-            e.method ? `通用方法：${e.method}` : '',
             e.answer ? `答案：${e.answer}` : '',
+            e.answerSource ? `答案出处：${e.answerSource}` : '',
             arr(e.keyPoints).length ? `关键点：${e.keyPoints.join('；')}` : '',
             arr(e.pitfalls).length ? `易错点：${e.pitfalls.join('；')}` : '',
           ]
             .filter(Boolean)
             .join('\n'),
         });
+        const where = [fi.file, fi.page, fi.section].filter(Boolean);
         return `
     <div class="example" ${d.attrs}>
       <div class="example-head">
         <span class="idx">${esc(e.id ?? i + 1)}</span>
         <div style="flex:1">
-          <h4>${esc(e.title || `事例 ${i + 1}`)}</h4>
+          <h4>${esc(e.title || `示例 ${i + 1}`)}</h4>
           <div class="tags">
-            ${e.type ? `<span class="tag type">${esc(e.type)}</span>` : ''}
-            ${e.location ? `<span class="tag">${icon('pin', 11)}${esc(e.location)}</span>` : ''}
+            ${e.kind ? `<span class="tag type">${esc(e.kind)}</span>` : ''}
+            ${where.length ? `<span class="tag">${icon('pin', 11)}${esc(where.join(' · '))}</span>` : ''}
           </div>
         </div>
         ${d.btn}
       </div>
       <div class="example-body">
+        ${
+          where.length || fi.quote
+            ? `<div class="ex-source">
+                 <span class="lbl">出处</span>
+                 <div class="ex-source-where">${esc(where.join(' · ') || '未标注')}</div>
+                 ${fi.quote ? `<div class="ex-source-quote">“${esc(fi.quote)}”</div>` : ''}
+               </div>`
+            : ''
+        }
         ${e.context ? `<p style="margin:0 0 12px;color:var(--text-2);font-size:13px">${esc(e.context)}</p>` : ''}
         ${e.stem ? `<div class="stem"><span class="lbl">题目 / 情境</span>${esc(e.stem)}</div>` : ''}
+        ${e.thinking ? `<div class="ex-thinking"><b>先想这一步</b>${esc(e.thinking)}</div>` : ''}
         ${
           arr(e.steps).length
             ? `<div class="steps">${e.steps
@@ -2422,8 +2689,17 @@ function renderExamples(ex) {
                 .join('')}</div>`
             : ''
         }
-        ${e.method ? `<div class="note-box"><b>通用方法：</b>${esc(e.method)}</div>` : ''}
-        ${e.answer ? `<div class="answer"><b>答案 / 结论：</b>${esc(e.answer)}</div>` : ''}
+        ${
+          e.answer
+            ? `<div class="ex-answer">
+                 <button class="btn sm" data-answer-toggle>${icon('eye', 12)}点开看答案</button>
+                 <div class="ex-answer-body" hidden>
+                   <div class="answer"><b>答案 / 结论：</b>${esc(e.answer)}</div>
+                   ${e.answerSource ? `<div class="ex-answer-src">${esc(e.answerSource)}</div>` : ''}
+                 </div>
+               </div>`
+            : ''
+        }
         ${arr(e.keyPoints).length ? `<div style="margin-top:14px"><b style="font-size:13px">关键点</b>${listHtml(e.keyPoints)}</div>` : ''}
         ${arr(e.pitfalls).length ? `<div class="note-box"><b>易错点</b>${listHtml(e.pitfalls, '')}</div>` : ''}
         ${e.board ? `<div class="board-box"><span class="lbl">关键式子</span>${esc(e.board)}</div>` : ''}
@@ -2432,6 +2708,19 @@ function renderExamples(ex) {
       })
       .join('')
   );
+}
+
+/** 示例页：把「答案」的展开/收起接上（答案默认折叠，先自己想） */
+function wireExamples() {
+  $$('[data-answer-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const body = btn.parentElement?.querySelector('.ex-answer-body');
+      if (!body) return;
+      const open = body.hidden;
+      body.hidden = !open;
+      btn.innerHTML = open ? `${icon('eye', 12)}收起答案` : `${icon('eye', 12)}点开看答案`;
+    });
+  });
 }
 
 /* --------------------------- 总结分析 --------------------------- */
@@ -3347,6 +3636,31 @@ function renderPageChat(index) {
   </div>`;
 }
 
+/**
+ * 问答内容变了，把界面刷一下。
+ *
+ * 为什么不能在这里直接 render()：render() 只重画后台那套标签页，压根不碰
+ * #presenterRoot，而问答栏只存在于全屏讲解浮层里。于是在讲解模式里提问，
+ * 新消息和流式回答都不会自己出现，必须先退出再进来 —— 那才会走 renderPresenter
+ * 重读一次状态。这就是「生成完了却不更新」的根因。
+ *
+ * 这里只重画消息列表本身，不动浮层其它部分，免得把计时器、课件页码、
+ * 以及用户正在输入框里打的字一起重置掉。
+ */
+function syncPageChat() {
+  const box = $('#presenterRoot #pcMsgs');
+  if (!box) {
+    // 不在讲解模式（问答栏只在浮层里，正常走不到），交给常规渲染兜底
+    render();
+    return;
+  }
+  const msgs = arr(state.project?.pageChat);
+  box.innerHTML = msgs.length
+    ? msgs.map(pageChatMsg).join('')
+    : '<div class="pc-empty">这一页有哪里没懂？直接问，AI 会只就这一页和你讲。</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
 function wirePageChat() {
   const panel = $('#pageChat');
   if (!panel) return;
@@ -3400,7 +3714,7 @@ async function pageChatSend() {
     input.value = '';
     input.style.height = 'auto';
   }
-  render();
+  syncPageChat();
 
   const box = () => $('#pcMsgs .pc-msg:last-child .pc-bubble');
   const paint = (html) => {
@@ -3428,14 +3742,14 @@ async function pageChatSend() {
     if (!local[local.length - 1].content) throw new Error('模型没有返回内容，请重试');
     delete local[local.length - 1].streaming;
     state.pageChat.sending = false;
-    render();
+    syncPageChat();
   } catch (err) {
     state.pageChat.sending = false;
     local.pop();
     local.pop();
     if (input) input.value = question;
     toast(err.message, 'err');
-    render();
+    syncPageChat();
   }
 }
 
@@ -4277,6 +4591,29 @@ function openSettings() {
       <input type="text" id="setModel" value="${esc(state.apiModel || p.model || cfg.model || '')}">
     </div>
     <div id="setTestResult"></div>
+    ${
+      IS_STATIC
+        ? ''
+        : `<div class="field" style="margin-top:4px">
+             <label>出错日志</label>
+             <p class="hint" style="margin:0 0 9px">
+               生成失败 / 模型返回异常都会记到服务端日志，<b>包含模型的原始返回</b>。
+               出错时先看这里，比只贴一句报错有用得多。
+             </p>
+             <button class="btn sm" id="openLogs">查看最近报错日志</button>
+           </div>
+           <div class="field" style="margin-top:4px">
+             <label>访问口令 ${cfg.accessRequired ? '<span style="color:var(--ok)">（已开启）</span>' : ''}</label>
+             <p class="hint" style="margin:0 0 9px">
+               放到外网时建议设一个：不设的话，谁知道地址谁就能用你的 API Key、往你磁盘写东西。
+               ${cfg.accessRequired ? '留空表示不改；想彻底关掉请点下面的「关闭口令」。' : '设了之后打开平台要先输口令。'}
+             </p>
+             <div style="display:flex;gap:9px;align-items:center">
+               <input type="password" id="setPass" placeholder="${cfg.accessRequired ? '••••••（不改就留空）' : '设一个访问口令'}" autocomplete="new-password" style="flex:1">
+               ${cfg.accessRequired ? '<button class="btn sm" id="clearPass">关闭口令</button>' : ''}
+             </div>
+           </div>`
+    }
     <div class="modal-actions" style="justify-content:space-between">
       <div>${state.apiKey ? '<button class="btn" id="clearKey">清除我的 Key</button>' : ''}</div>
       <div style="display:flex;gap:9px">
@@ -4296,6 +4633,24 @@ function openSettings() {
     if ($('#setModel').value.trim() === '' && sel.model) $('#setModel').value = sel.model;
   };
   hint();
+
+  // 日志在新标签页里打开纯文本版，方便直接看 / 复制给别人
+  $('#openLogs')?.addEventListener('click', () => {
+    window.open('/api/logs.txt?n=200', '_blank', 'noopener');
+  });
+
+  // 关闭访问口令
+  $('#clearPass')?.addEventListener('click', async () => {
+    const ok = await confirmBox({
+      title: '关闭访问口令？',
+      body: '关掉之后，任何知道地址的人都能打开这个平台。',
+      okText: '关闭',
+    });
+    if (!ok) return;
+    await api('/api/config', { method: 'POST', body: JSON.stringify({ accessPassword: '' }) });
+    toast('已关闭访问口令');
+    closeModal();
+  });
 
   $('#setProvider').addEventListener('change', () => {
     const sel = providers().find((x) => x.id === $('#setProvider').value);
@@ -4340,16 +4695,26 @@ function openSettings() {
     }
   });
 
-  $('#saveSettings').addEventListener('click', () => {
+  $('#saveSettings').addEventListener('click', async () => {
     const v = collect();
     if (keyRequired() && !v.apiKey) {
       toast('请填入 API Key', 'err');
       return;
     }
     applyLocal(v);
+    // 访问口令是服务器级设置，得单独发到后端存（其余几项只存在浏览器里）
+    const pw = ($('#setPass')?.value || '').trim();
+    if (pw && !IS_STATIC) {
+      try {
+        await api('/api/config', { method: 'POST', body: JSON.stringify({ accessPassword: pw }) });
+      } catch (e) {
+        toast(e.message || '访问口令没设上', 'err');
+        return;
+      }
+    }
     closeModal();
     state.gateOpen = false;
-    toast('设置已保存', 'ok');
+    toast(pw ? '访问口令已设好，下次打开要输它' : '设置已保存', 'ok');
     render();
   });
 
@@ -4479,7 +4844,12 @@ function wireStaticEvents() {
       // 不依赖浏览器的 Fullscreen API，所以这里直接关掉它就对了。
       e.preventDefault();
       closePresenter();
-    } else if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) {
+      return;
+    }
+    // 正在输入框里打字：空格、方向键、字母都只是文字，不能被这里的快捷键抢走。
+    // 放在 Esc 之后，保证「Esc 退出讲解」在任何时候都还管用。
+    if (isTypingTarget(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) {
       e.preventDefault();
       goPresenter(1);
     } else if (['ArrowLeft', 'PageUp'].includes(e.key)) {

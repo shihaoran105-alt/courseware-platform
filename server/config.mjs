@@ -15,8 +15,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_KEY_URL, PROVIDERS } from './providers.mjs';
+
+const sha256 = (s) => crypto.createHash('sha256').update(String(s), 'utf8').digest('hex');
 
 export { DEFAULT_KEY_URL, PROVIDERS };
 
@@ -178,6 +181,51 @@ export function saveConfig(patch = {}) {
   return loadServerConfig();
 }
 
+/**
+ * 访问口令。
+ *
+ * 平台本身没有账号体系（定位是「打开就能用」）。可一旦放到外网，
+ * 谁知道地址谁就能用你的 API Key、往你磁盘写东西，所以给自建服务器留一道门。
+ *
+ * 口令来源优先级：环境变量 ACCESS_PASSWORD > 设置里存的。
+ * 只存口令的哈希，不存明文。
+ */
+export function accessPasswordHash() {
+  const fromEnv = String(process.env.ACCESS_PASSWORD || '').trim();
+  if (fromEnv) return sha256(`env:${fromEnv}`);
+  const saved = readJson(CONFIG_FILE, {});
+  return String(saved.accessPassword || '').trim();
+}
+
+/** 有没有设口令（界面据此决定要不要弹门） */
+export function accessRequired() {
+  return Boolean(accessPasswordHash());
+}
+
+export function setAccessPassword(pw) {
+  const saved = readJson(CONFIG_FILE, {});
+  const next = { ...saved };
+  const v = String(pw ?? '').trim();
+  if (v) next.accessPassword = sha256(`set:${v}`);
+  else delete next.accessPassword;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+  return accessRequired();
+}
+
+/** 口令比对：把用户输入按同样的方式算一遍再比，用定长比较防时序探测 */
+export function checkAccessPassword(pw) {
+  const want = accessPasswordHash();
+  if (!want) return true;
+  const fromEnv = String(process.env.ACCESS_PASSWORD || '').trim();
+  const given = sha256(`${fromEnv ? 'env' : 'set'}:${String(pw ?? '').trim()}`);
+  if (given.length !== want.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(want));
+  } catch {
+    return false;
+  }
+}
+
 /** 给前端的脱敏状态（永远不含 Key 本身） */
 export function publicConfig() {
   const base = loadServerConfig();
@@ -185,6 +233,7 @@ export function publicConfig() {
   return {
     publicMode: isPublicMode(),
     hasServerKey: Boolean(apiKey),
+    accessRequired: accessRequired(),
     model: base.model,
     visionModel: base.visionModel,
     baseUrl: base.baseUrl,

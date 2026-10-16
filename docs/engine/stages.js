@@ -22,10 +22,10 @@ export const STAGE_CATALOG = [
   },
   {
     key: 'examples',
-    label: '事例讲解',
+    label: '示例讲解',
     labelEn: 'Worked examples',
-    desc: '把材料里的例题、案例拆成「题目 → 分步讲解 → 通用方法 → 易错点」。',
-    descEn: 'Breaks the examples in the material into question, step-by-step solution, general method and common mistakes.',
+    desc: '先把课件里的 exercise（习题/练习）找出来，没有就找课件提到的例子；讲清思路，答案折叠。每条都标注出处。',
+    descEn: 'Finds the exercises in the material (or the examples it mentions), explains the thinking, cites where each came from, and keeps the answer folded.',
     tab: 'examples',
     basedOn: ['courseware'],
   },
@@ -104,7 +104,7 @@ export function recommendStages(files = []) {
 
   if (has('courseware')) {
     ['analysis', 'examples', 'guide', 'narration'].forEach((k) => picked.add(k));
-    why.push('有课件 · 讲义 → 分析内容、讲事例、给教学方案、写逐页讲解稿');
+    why.push('有课件 · 讲义 → 分析内容、讲示例、给教学方案、写逐页讲解稿');
   }
   if (has('lab')) {
     picked.add('lab');

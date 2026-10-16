@@ -1,9 +1,9 @@
 /**
- * 分析流水线：课件 → 读懂材料 → 事例讲解 → 学习规划 → 逐页讲解 → 总结分析 → 练习题 → Lab
+ * 分析流水线：课件 → 读懂材料 → 示例讲解 → 学习规划 → 逐页讲解 → 总结分析 → 练习题 → Lab
  *
  * 每个阶段独立容错：某一阶段失败不会让整体失败，前端会看到哪一步出错。
  */
-import { AIError, completeJSON, packImages, stream } from './ai.js';
+import { AIError, completeJSON, packImages, stream, reportDiagnostic } from './ai.js';
 import {
   ALIGN_SYSTEM,
   ANALYZE_SYSTEM,
@@ -190,6 +190,8 @@ export async function runFullAnalysis({
   skipNarration = false,
   only = null,
   pageImages = [],
+  // 上一次的生成结果：只重做一部分时，没勾的那些从这里原样搬过来
+  previous = null,
 }) {
   const started = Date.now();
   const context = files.context;
@@ -282,7 +284,7 @@ export async function runFullAnalysis({
     },
     {
       key: 'examples',
-      label: '讲透其中的事例',
+      label: '讲透其中的示例',
       weight: 30,
       run: async () => {
         const { data, usage } = await completeJSON(cfg, {
@@ -382,11 +384,27 @@ export async function runFullAnalysis({
     },
   ];
 
-  // 用户只勾了一部分模式时，没勾的直接标记跳过，别让进度条和结果里出现空洞
+  // 用户只勾了一部分模式时：没勾的**如果以前生成过，就原样留着**，不要删掉。
+  // 以前这里无条件写成 { skipped:true }，于是「只想重做逐页讲解」会把已经生成好的
+  // 课件分析、示例、学习规划、总结全清掉 —— 用户看到的就是「重新生成后东西没了」。
   const selected = Array.isArray(only) && only.length ? new Set(only) : null;
   if (selected) {
     for (const s of stages) {
       if (selected.has(s.key)) continue;
+      const old = previous?.[s.key];
+      if (old && !old.skipped) {
+        result[s.key] = old;
+        emit({
+          type: 'stage',
+          stage: s.key,
+          label: s.label,
+          status: 'kept',
+          ms: 0,
+          progress: 0,
+          message: '这次没勾选，保留上次生成的内容',
+        });
+        continue;
+      }
       result[s.key] = { skipped: true, reason: '这次没有勾选这个模式' };
       emit({
         type: 'stage',
@@ -447,6 +465,13 @@ export async function runFullAnalysis({
       if (err.name === 'AbortError') throw err;
       doneWeight += stage.weight;
       result.errors.push({ stage: stage.key, label: stage.label, message: err.message });
+      // 阶段失败在这里就被咽下去了，路由层的 catch 永远收不到 —— 必须自己落盘，
+      // 否则「有 1 个环节没成功」只剩界面上那句话，日志里什么都查不到。
+      reportDiagnostic(`stage.${stage.key}`, err, {
+        stage: stage.key,
+        label: stage.label,
+        mode: '批量生成',
+      });
       emit({
         type: 'stage',
         stage: stage.key,

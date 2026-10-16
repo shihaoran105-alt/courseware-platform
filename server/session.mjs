@@ -9,13 +9,35 @@ import crypto from 'node:crypto';
 const COOKIE = 'cw_sid';
 const SID_RE = /^[a-f0-9]{32}$/;
 
-/** 每个会话的资源上限，防止公开部署被人刷爆磁盘 */
+/**
+ * 每个会话的资源上限。
+ *
+ * 只有**明确**设了 PUBLIC_MODE=1（公开给人用的部署）时才默认收紧；
+ * 自己家里跑的默认全部不限 —— 这时候限制只会碍事。
+ *
+ * 为什么不复用 config.mjs 的 isPublicMode()：那个函数在 HOST=0.0.0.0 时也返回 true，
+ * 而自己的服务器为了能被局域网 / Tailscale 访问，**必须**绑 0.0.0.0。
+ * 用它当开关的话，自建服务器会被当成公开部署，白白被限额。
+ *
+ * 单独设某个环境变量可以覆盖默认；0 表示不限。
+ */
+const PUBLIC = /^(1|true|yes|on)$/i.test(String(process.env.PUBLIC_MODE || '').trim());
+
+function quota(envName, publicDefault) {
+  const raw = String(process.env[envName] ?? '').trim();
+  if (raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return PUBLIC ? publicDefault : 0; // 0 = 不限
+}
+
 export const QUOTAS = {
-  maxProjects: Number(process.env.MAX_PROJECTS_PER_SESSION) || 30,
-  maxStorageMb: Number(process.env.MAX_STORAGE_MB) || 500,
-  analyzePerHour: Number(process.env.RATE_ANALYZE_PER_HOUR) || 20,
-  gradePerHour: Number(process.env.RATE_GRADE_PER_HOUR) || 400,
-  uploadsPerHour: Number(process.env.RATE_UPLOAD_PER_HOUR) || 80,
+  maxProjects: quota('MAX_PROJECTS_PER_SESSION', 30),
+  maxStorageMb: quota('MAX_STORAGE_MB', 500),
+  analyzePerHour: quota('RATE_ANALYZE_PER_HOUR', 20),
+  gradePerHour: quota('RATE_GRADE_PER_HOUR', 400),
+  uploadsPerHour: quota('RATE_UPLOADS_PER_HOUR', 80),
 };
 
 /** sid → { createdAt, lastSeen, bytes, hits: { analyze: [ts], ... } } */
@@ -80,6 +102,7 @@ export function usedBytes(sid) {
 }
 
 export function overStorage(sid) {
+  if (!QUOTAS.maxStorageMb) return false; // 0 = 不限
   return usedBytes(sid) > QUOTAS.maxStorageMb * 1024 * 1024;
 }
 

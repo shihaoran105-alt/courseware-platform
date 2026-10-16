@@ -752,12 +752,15 @@ function labInner() {
           <div class="lab-steps">
             ${steps
               .map((s) => {
+                const code = String(s.code || '').trim();
                 // 整个步骤块可拖进右侧 AI 咨询，方便问「这一步为什么这么做」
                 const d = dnd({
                   title: `第 ${s.no} 步：${String(s.action || '').slice(0, 60)}`,
                   source: `${lab.title || 'Lab'} · 实验步骤`,
                   text: [
                     `第 ${s.no} 步：${s.action || ''}`,
+                    s.answer ? `答案：${s.answer}` : '',
+                    code ? `代码：\n${code}` : '',
                     s.expected ? `预期结果：${s.expected}` : '',
                     s.tip ? `提示：${s.tip}` : '',
                   ]
@@ -771,6 +774,19 @@ function labInner() {
                 </label>
                 <div class="step-body">
                   <div class="step-action">${esc(s.action)}</div>
+                  ${s.answer ? `<div class="step-answer"><b>答案</b>${esc(s.answer)}</div>` : ''}
+                  ${
+                    code
+                      ? `<div class="step-code">
+                          <div class="step-code-head">
+                            <b>代码</b>${s.codeLang ? `<span class="tag">${esc(s.codeLang)}</span>` : ''}
+                            <span class="spacer"></span>
+                            <button class="btn sm ghost" data-copycode="${esc(s.no)}">${icon('clipboard', 12)}复制</button>
+                          </div>
+                          <pre><code>${esc(code)}</code></pre>
+                        </div>`
+                      : ''
+                  }
                   ${s.expected ? `<div class="step-expected"><b>预期结果</b>${esc(s.expected)}</div>` : ''}
                   ${s.tip ? `<div class="step-tip"><b>提示</b>${esc(s.tip)}</div>` : ''}
                 </div>
@@ -877,6 +893,22 @@ function wireLab() {
     b.addEventListener('click', () => {
       qlState.labIndex = Number(b.dataset.labjump);
       paintLab();
+    }),
+  );
+
+  // 复制这一步的代码：学生就是要把代码拿去用，别让人手动选
+  $$('[data-copycode]', root).forEach((b) =>
+    b.addEventListener('click', async () => {
+      const step = arr(currentLab()?.steps).find((x) => String(x.no) === b.dataset.copycode);
+      const code = String(step?.code || '').trim();
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        toast('代码已复制');
+      } catch {
+        // 非 https 或没授权时退回到手选
+        toast('这个环境不让自动复制，手动选中代码复制吧', 'err');
+      }
     }),
   );
 

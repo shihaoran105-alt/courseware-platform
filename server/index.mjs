@@ -1,6 +1,7 @@
 /** 课件讲解平台 — HTTP 服务 */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
 import multer from 'multer';
 
@@ -16,6 +17,10 @@ import {
   resolveRequestConfig,
   saveConfig,
   serverKey,
+  accessRequired,
+  accessPasswordHash,
+  checkAccessPassword,
+  setAccessPassword,
 } from './config.mjs';
 import { VERSION_FILE, readVersion } from './version.mjs';
 import { isSafeUrl, remoteStatus, setUpdateCheckUrl, updateCheckUrl } from './update-check.mjs';
@@ -40,6 +45,8 @@ import {
   slimProject,
 } from './store.mjs';
 import { QUOTAS, addBytes, checkRate, overStorage, sessionMiddleware, sweepSessions } from './session.mjs';
+import { logError, recentErrors, logDir, logCount, readLogTail, parseLogBlocks } from './log.mjs';
+import { setDiagnosticSink } from './ai/client.mjs';
 import {
   canEditGroup,
   createGroup,
@@ -71,10 +78,48 @@ import { toMarkdown } from './export.mjs';
 import { buildPreviewPdf, canRender, mediaName } from './render.mjs';
 import { classifyRole, isDocKind, isValidRole, matchSolution, ROLE_CATALOG, roleLabel } from './roles.mjs';
 
+const sha256 = (v) => crypto.createHash('sha256').update(String(v), 'utf8').digest('hex');
+
 const app = express();
 app.disable('x-powered-by');
-if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
-// 普通接口的 JSON body 很小；导入接口要收内嵌了课件原件的 .cwpack，可能上百 MB，
+
+/**
+ * 把 AI 客户端的诊断信息接到落盘日志上。
+ * client.mjs 会被编译成浏览器版，所以它自己不碰 node:fs，只往这里回传。
+ */
+setDiagnosticSink((scope, payload) => {
+  const { error, ...extra } = payload || {};
+  logError(scope, error, extra);
+});
+
+// 进程级的兜底：以前崩了只在终端一闪而过，用户复述不出来
+process.on('uncaughtException', (err) => {
+  logError('process.uncaughtException', err, {});
+  console.error('[fatal]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  logError('process.unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)), {});
+  console.error('[fatal] unhandledRejection', reason);
+});
+
+/**
+ * 接口出错的统一出口：先落盘，再回一句话给界面。
+ * 以前 catch 里只有 res.status(500).json(...)，错误只活在响应里，
+ * 用户一刷新就没了，只剩界面上那句「……无法解析」。
+ */
+function failJson(req, res, err) {
+  logError('http', err, {
+    method: req?.method,
+    path: String(req?.originalUrl || req?.url || '').split('?')[0],
+    project: req?.params?.id || '',
+    stage: req?.body?.stage || '',
+    model: req?.body?.model || '',
+  });
+  if (res.headersSent) return;
+  res.status(500).json({ error: err.message });
+}
+
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);// 普通接口的 JSON body 很小；导入接口要收内嵌了课件原件的 .cwpack，可能上百 MB，
 // 所以把它排除在全局解析器之外，由那条路由自己放宽上限。
 const smallJson = express.json({ limit: '2mb' });
 app.use((req, res, next) => {
@@ -100,6 +145,65 @@ app.use((_req, res, next) => {
 
 // 匿名会话（数据隔离的基石）
 app.use(sessionMiddleware);
+
+/* ------------------------------- 访问口令 ------------------------------- */
+/**
+ * 设了口令就挡一道门。放在会话之后、所有业务路由之前。
+ *
+ * 放行：口令接口本身、静态页面（要能弹出输入框）、版本接口（前端启动时要读）。
+ * 其余的 API 一律要带上有效的通行 cookie。
+ */
+const ACCESS_COOKIE = 'cw_pass';
+const accessToken = () => sha256(`cw-access:${accessPasswordHash()}`);
+
+app.get('/api/access', (req, res) => {
+  noStore(res);
+  const required = accessRequired();
+  const cookies = Object.fromEntries(
+    String(req.headers.cookie || '')
+      .split(';')
+      .map((x) => x.trim().split('='))
+      .filter((x) => x[0])
+      .map(([k, ...v]) => [k, v.join('=')]),
+  );
+  res.json({ required, ok: !required || cookies[ACCESS_COOKIE] === accessToken() });
+});
+
+app.post('/api/access', (req, res) => {
+  noStore(res);
+  if (!accessRequired()) {
+    res.json({ ok: true, required: false });
+    return;
+  }
+  if (!checkAccessPassword(req.body?.password)) {
+    // 口令错也要留痕，方便发现有人在试
+    logError('access', new Error('访问口令不正确'), { ip: req.ip || '' });
+    res.status(401).json({ error: '口令不正确' });
+    return;
+  }
+  res.cookie(ACCESS_COOKIE, accessToken(), {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 365 * 24 * 3600 * 1000,
+    path: '/',
+  });
+  res.json({ ok: true, required: true });
+});
+
+app.use((req, res, next) => {
+  if (!accessRequired()) return next();
+  if (!req.path.startsWith('/api/')) return next(); // 静态资源放行，否则连输入框都打不开
+  if (req.path === '/api/access' || req.path === '/api/version') return next();
+  const cookies = Object.fromEntries(
+    String(req.headers.cookie || '')
+      .split(';')
+      .map((x) => x.trim().split('='))
+      .filter((x) => x[0])
+      .map(([k, ...v]) => [k, v.join('=')]),
+  );
+  if (cookies[ACCESS_COOKIE] === accessToken()) return next();
+  res.status(401).json({ error: '需要访问口令', needPassword: true });
+});
 
 /* ------------------------------- 上传配置 ------------------------------- */
 
@@ -242,6 +346,14 @@ app.post('/api/config', (req, res) => {
     res.status(403).json({ error: '本站为公开部署，请使用你自己的 API Key（只需填在浏览器里，不会上传服务器）。' });
     return;
   }
+  // 访问口令：只有本机模式（也就是服务器主人）能改 —— 访客不该能改服务器的大门
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'accessPassword')) {
+    if (isPublicMode()) {
+      res.status(403).json({ error: '公开部署不允许修改服务器访问口令' });
+      return;
+    }
+    setAccessPassword(req.body.accessPassword);
+  }
   saveConfig({ apiKey: req.body?.apiKey, model: req.body?.model, baseUrl: req.body?.baseUrl });
   res.json(publicConfig());
 });
@@ -272,7 +384,8 @@ app.post('/api/verify-key', async (req, res) => {
 app.get('/api/projects', (req, res) => res.json({ projects: listProjects(req.sid) }));
 
 app.post('/api/projects', (req, res) => {
-  if (countOwnedProjects(req.sid) >= QUOTAS.maxProjects) {
+  // maxProjects=0 表示不限（自建服务器默认就是不限）
+  if (QUOTAS.maxProjects && countOwnedProjects(req.sid) >= QUOTAS.maxProjects) {
     res.status(429).json({ error: `最多只能建 ${QUOTAS.maxProjects} 个项目，请先删掉一些。` });
     return;
   }
@@ -696,7 +809,7 @@ function ocrCacheFor(key) {
  *
  * 文字型 PDF 不走这里 —— 它们本来就有文字层，pdfjs 直接读，95 页实测 0.08 秒。
  * 只有抽不出文字的扫描件/拍照件才需要，而且**只做一次**、结果落盘缓存，
- * 之后所有阶段（分析/事例/规划/总结/题/Lab）都读文字，不再反复发同一批图片。
+ * 之后所有阶段（分析/示例/规划/总结/题/Lab）都读文字，不再反复发同一批图片。
  *
  * @returns {Promise<Array<{id:string, name:string, pages:number}>>} 这次真正识别过的文件
  */
@@ -813,6 +926,18 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
      */
     let pageImages = [];
     const readMode = readModeOf(req.body);
+    if (readMode !== 'text' && !chromeState().available) {
+      // 以前这里是「静默跳过」：读图请求落空，用户只会看到讲解稿里
+      // 「课件没有给出正文内容」这种莫名其妙的结论（其实页面上有图有代码）。
+      stream.send({
+        type: 'stage-detail',
+        stage: 'analysis',
+        level: 'warn',
+        message:
+          `没找到 Chrome / Edge，这次**只能按文字读**：课件里画成图片的代码块、电路图、表格都看不到。` +
+          `装一个 Google Chrome（或 Edge）后重新生成即可。`,
+      });
+    }
     if (readMode !== 'text' && chromeState().available) {
       try {
         const r = await collectPageImages({
@@ -862,6 +987,13 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
         skipNarration: hasVideo,
         only,
         pageImages,
+        // 只勾了一部分时，没勾的那些阶段要从这里把上次的结果捞回来。
+        // 中文那遍从 analysis 捞，英文那遍必须从 analysisEn 捞 ——
+        // 否则英文版会被灌进中文内容。
+        previous:
+          lang === 'en'
+            ? project.analysis?.analysisEn || null
+            : project.analysis || null,
         emit: (evt) => stream.send({ ...evt, lang, passLabel }),
       });
 
@@ -903,8 +1035,18 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
     persist(project);
     stream.send({ type: 'saved', project: slim(req, project) });
   } catch (err) {
-    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
-    else stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    if (err.name === 'AbortError') {
+      stream.send({ type: 'aborted' });
+    } else {
+      // 整份分析失败是用户最常贴过来的那种错，务必落盘（含模型原始返回）
+      logError('analyze', err, {
+        project: req.params?.id || '',
+        stages: Array.isArray(only) ? only.join(',') : '全部',
+        readMode: readModeOf(req.body),
+        model: cfg.model,
+      });
+      stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    }
   } finally {
     stream.close();
   }
@@ -925,6 +1067,13 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
     // 读图模式沿用这次请求的选择，默认还是 auto（只读图表页）
     let pageImages = [];
     const rerunReadMode = readModeOf(req.body);
+    if (rerunReadMode !== 'text' && !chromeState().available) {
+      // 同样是「别静默降级」：用户点了重新生成，得知道这次没读到图
+      logError('readmode', new Error('没找到 Chrome，重跑只能按文字读'), {
+        project: req.params?.id || '',
+        stage,
+      });
+    }
     if (rerunReadMode !== 'text' && chromeState().available) {
       try {
         pageImages = (await collectPageImages({ project, mode: rerunReadMode })).images;
@@ -951,7 +1100,7 @@ app.post('/api/projects/:id/rerun', async (req, res) => {
     persist(project);
     res.json({ ok: true, stage, data, project: slim(req, project) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    failJson(req, res, err);
   }
 });
 
@@ -1000,7 +1149,7 @@ app.post('/api/projects/:id/grade', async (req, res) => {
     res.json({ ok: true, questionId: question.id, result, project: slim(req, project) });
   } catch (err) {
     if (err.name === 'AbortError') return;
-    res.status(500).json({ error: err.message });
+    failJson(req, res, err);
   }
 });
 
@@ -1087,7 +1236,7 @@ app.post('/api/projects/:id/explain', async (req, res) => {
     res.json({ ok: true, questionId: question.id, result, excerpt, answerKeyUsed: answerKeyUsed || '' });
   } catch (err) {
     if (err.name === 'AbortError') return;
-    res.status(500).json({ error: err.message });
+    failJson(req, res, err);
   }
 });
 
@@ -1225,8 +1374,16 @@ app.post('/api/projects/:id/transcribe', async (req, res) => {
       project: slim(req, project),
     });
   } catch (err) {
-    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
-    else stream.send({ type: 'fatal', message: err.message });
+    if (err.name === 'AbortError') {
+      stream.send({ type: 'aborted' });
+    } else {
+      // 录像转写失败也要落盘：转写链路（ffmpeg / stt）出错时只有这里能留下线索
+      logError('transcribe', err, {
+        project: req.params?.id || '',
+        fileId: req.body?.fileId || '',
+      });
+      stream.send({ type: 'fatal', message: err.message });
+    }
   } finally {
     stream.close();
   }
@@ -1311,7 +1468,7 @@ app.post('/api/projects/:id/lab', async (req, res) => {
     res.json({ ok: true, labId: lab.id, result, project: slim(req, project) });
   } catch (err) {
     if (err.name === 'AbortError') return;
-    res.status(500).json({ error: err.message });
+    failJson(req, res, err);
   }
 });
 
@@ -1368,8 +1525,16 @@ app.post('/api/projects/:id/chat', async (req, res) => {
     persist(project);
     stream.send({ type: 'done' });
   } catch (err) {
-    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
-    else stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    if (err.name === 'AbortError') {
+      stream.send({ type: 'aborted' });
+    } else {
+      // 流式接口的错也要落盘：只发一个 fatal 事件给前端，刷新就没了
+      logError('sse', err, {
+        project: req.params?.id || '',
+        path: String(req.originalUrl || '').split('?')[0],
+      });
+      stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    }
   } finally {
     stream.close();
   }
@@ -1467,8 +1632,16 @@ app.post('/api/projects/:id/ask', async (req, res) => {
     persist(project);
     stream.send({ type: 'done' });
   } catch (err) {
-    if (err.name === 'AbortError') stream.send({ type: 'aborted' });
-    else stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    if (err.name === 'AbortError') {
+      stream.send({ type: 'aborted' });
+    } else {
+      // 流式接口的错也要落盘：只发一个 fatal 事件给前端，刷新就没了
+      logError('sse', err, {
+        project: req.params?.id || '',
+        path: String(req.originalUrl || '').split('?')[0],
+      });
+      stream.send({ type: 'fatal', message: err.message, needsKey: err.code === 'NEED_KEY' });
+    }
   } finally {
     stream.close();
   }
@@ -1655,6 +1828,29 @@ app.get('/api/version', async (_req, res) => {
   res.json({ ...readVersion(), remote: await remoteStatus() });
 });
 
+/**
+ * 看最近的报错日志。
+ * 出错时界面上只显示一句话，而「模型到底返回了什么」在这里 —— 排查全靠它。
+ * 只返回内存里最近的那些，不把整天的文件读出来。
+ */
+app.get('/api/logs', (req, res) => {
+  noStore(res);
+  const n = Number(req.query.n) || 50;
+  // 文件才是准的：进程重启后内存是空的，但文件还在
+  const fromFile = parseLogBlocks(readLogTail(), n);
+  res.json({ dir: logDir(), count: fromFile.length || logCount(), items: fromFile.length ? fromFile : recentErrors(n) });
+});
+
+/** 把日志导出成纯文本，方便直接发给别人看 */
+app.get('/api/logs.txt', (req, res) => {
+  noStore(res);
+  // 直接给文件的尾部原文：这是用户真正要看的东西，不经过二次加工，也不会因重启丢失
+  const body = readLogTail(256 * 1024);
+  res.type('text/plain; charset=utf-8').send(
+    `日志目录：${logDir()}\n（下面是最近一个日志文件的尾部；完整文件用编辑器打开即可）\n\n${body || '（还没有记录）'}\n`,
+  );
+});
+
 /** 强制检查一次远端（「检查更新」按钮用），这次会等网络 */
 app.post('/api/version/check', async (req, res) => {
   noStore(res);
@@ -1665,7 +1861,7 @@ app.post('/api/version/check', async (req, res) => {
   try {
     res.json({ ...readVersion(), remote: await remoteStatus({ force: true }) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    failJson(req, res, err);
   }
 });
 
@@ -1693,6 +1889,8 @@ app.post('/api/version/update', async (_req, res) => {
     });
     setTimeout(() => process.exit(0), 700).unref();
   } catch (err) {
+    // 更新失败也要落盘：用户只会看到一句 toast，网络细节全在这里
+    logError('update', err, { from: readVersion().version });
     res.status(500).json({ error: err?.message || String(err) });
   }
 });

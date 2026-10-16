@@ -80,6 +80,19 @@ export function getProject(id) {
 }
 
 /**
+ * 自建服务器 = 单用户工作区。
+ *
+ * 平台原本给每个浏览器发一个匿名 session，各自只能看到自己的项目 —— 那是为了
+ * 「一个公开部署给一群人用」不互相串数据。但自己家里跑的时候，这个隔离只会碍事：
+ * 在服务器那台的浏览器导入的项目，换台电脑打开就一个都看不见
+ * （owner 是那个浏览器的 session，和你的新 session 对不上）。
+ *
+ * 所以：**没有明确设 PUBLIC_MODE=1 时，整台机器就是一个人的，全员可见可改。**
+ * 和限额、日志一样由 PUBLIC_MODE 这一个开关统一控制。
+ */
+const SINGLE_USER = !/^(1|true|yes|on)$/i.test(String(process.env.PUBLIC_MODE || '').trim());
+
+/**
  * 老项目（会话功能上线前建的）没有 owner。
  * 本机模式下继续当成本地项目放行，公开模式下则严格隔离。
  */
@@ -87,9 +100,10 @@ function isLegacyLocal(project) {
   return !project.owner && !isPublicMode();
 }
 
-/** 能不能看：自己的、公开的演示项目、或本机模式下的老项目 */
+/** 能不能看：单用户模式全都可见；否则只看自己的 + 公开演示 + 老项目 */
 export function canAccess(project, sid) {
   if (!project) return false;
+  if (SINGLE_USER) return true;
   if (project.shared) return true;
   if (isLegacyLocal(project)) return true;
   return Boolean(sid) && project.owner === sid;
@@ -98,6 +112,7 @@ export function canAccess(project, sid) {
 /** 能不能改：只有自己的项目；演示项目对别人只读 */
 export function canEdit(project, sid) {
   if (!project) return false;
+  if (SINGLE_USER) return true;
   if (isLegacyLocal(project)) return true;
   return Boolean(sid) && project.owner === sid;
 }

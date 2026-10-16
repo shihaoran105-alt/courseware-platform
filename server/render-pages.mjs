@@ -21,10 +21,32 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { CACHE_DIR, PUBLIC_DIR, ROOT } from './config.mjs';
 
+/**
+ * 浏览器可能在哪些路径。**必须覆盖 Windows** ——
+ * 之前这里只有 macOS 和 Linux 的路径，于是搬到 Windows 上跑时 findChrome() 永远返回空，
+ * 所有「读图」在不知不觉中降级成纯文字：课件里那些**画成图片的代码块、电路图、表格**
+ * 就全都看不见了，模型只能看到文字层里的标题和页脚，于是写出
+ * 「课件上没有给出任何正文内容」这种结论 —— 而页面上明明印着整段 C 代码。
+ */
 const CHROME_CANDIDATES = [
+  // ---- Windows（用环境变量拼，不写死盘符）----
+  ...[
+    ['ProgramFiles', 'Google\\Chrome\\Application\\chrome.exe'],
+    ['ProgramFiles(x86)', 'Google\\Chrome\\Application\\chrome.exe'],
+    ['LOCALAPPDATA', 'Google\\Chrome\\Application\\chrome.exe'],
+    ['ProgramFiles', 'Microsoft\\Edge\\Application\\msedge.exe'],
+    ['ProgramFiles(x86)', 'Microsoft\\Edge\\Application\\msedge.exe'],
+    ['LOCALAPPDATA', 'Microsoft\\Edge\\Application\\msedge.exe'],
+  ]
+    .filter(([env]) => process.env[env])
+    // 用 path.win32.join：这些是 Windows 路径，不能受当前运行平台影响
+    // （在 macOS 上 path.join 不把 \ 当分隔符，拼出来会是一条不存在的怪路径）
+    .map(([env, rest]) => path.win32.join(process.env[env], rest)),
+  // ---- macOS ----
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
   '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  // ---- Linux ----
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
@@ -189,12 +211,28 @@ async function connectCdp(port, { timeoutMs = 20000 } = {}) {
 }
 
 /** 缓存目录里已经渲染好的页 -> [{page, file}] */
+/**
+ * 已经渲染好的页面。
+ *
+ * **必须把 0 字节的文件排除掉**：渲染中途失败、Chrome 没来得及画完、
+ * base64 是空的，都会留下一个只有文件名的空 jpg。以前这里只看文件名，
+ * 于是这种空图会被当成「已渲染」→ 命中缓存 → 以后每次生成都读到一张空图，
+ * 而且**永远不会自我修复**。表现就是：平台显示「读了 N 页图」，
+ * 模型却像什么都没看到一样写出「课件没有给出正文内容」。
+ */
 function renderedPages(dir) {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
     .filter((f) => /^p\d+\.jpg$/.test(f))
     .map((f) => ({ page: Number(f.match(/^p(\d+)\.jpg$/)[1]), file: path.join(dir, f) }))
+    .filter((p) => {
+      try {
+        return fs.statSync(p.file).size > 0; // 空图 = 没渲染成功，别算数
+      } catch {
+        return false;
+      }
+    })
     .sort((a, b) => a.page - b.page);
 }
 
@@ -385,7 +423,13 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode
       for (const item of list || []) {
         if (!item?.dataUrl) continue;
         const b64 = String(item.dataUrl).split(',')[1] || '';
-        fs.writeFileSync(path.join(dir, `p${item.page}.jpg`), Buffer.from(b64, 'base64'));
+        const buf = Buffer.from(b64, 'base64');
+        // 空图不要落盘：写下去会变成一张 0 字节的 jpg，以后被当成「已渲染」缓存命中
+        if (!buf.length) {
+          console.warn(`[render] 第 ${item.page} 页返回了空图片，跳过不写缓存`);
+          continue;
+        }
+        fs.writeFileSync(path.join(dir, `p${item.page}.jpg`), buf);
       }
     }
     return { useMode, want };
@@ -400,6 +444,14 @@ export async function rasterizePdf({ pdfPath, cacheKey, signal, onProgress, mode
   }
 
   const byPage = new Map(renderedPages(dir).map((p) => [p.page, p]));
+  // 要了却没拿到图：说一声，别让用户以为「读了图」其实一张都没读到
+  const missing = fresh.want.filter((n) => !byPage.has(n));
+  if (missing.length) {
+    const shown = missing.slice(0, 8).join('、');
+    onProgress?.(
+      `有 ${missing.length} 页没能渲染出图片（第 ${shown}${missing.length > 8 ? ' 等' : ''} 页），这几页只能按文字读`,
+    );
+  }
   return {
     pages: fresh.want.map((n) => byPage.get(n)).filter(Boolean).map(lazyPage),
     total: stats?.length || 0,
