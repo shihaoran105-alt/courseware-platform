@@ -67,15 +67,27 @@ const truthy = (v) => v === '1' || v === 'true' || v === 'yes';
 const falsy = (v) => v === '0' || v === 'false' || v === 'no';
 
 /**
- * 是否公开模式。
- * 显式 PUBLIC_MODE 优先；没设的话，只要 HOST 不是本机回环地址就自动开启——
- * 避免有人 `HOST=0.0.0.0 npm start` 之后把自己的 Key 暴露给整个互联网。
+ * 是否公开模式（公开部署 = 给别人用：访客自带 Key、不能用服务器 Key、不能点更新、限额生效）。
+ *
+ * 判断顺序：
+ *  1. 显式设了 PUBLIC_MODE 就听它的（`npm run start:public` 会设 1；
+ *     自建服务器的启动脚本会设 0）。
+ *  2. 没设时看绑在哪：绑回环 = 自己用；绑 0.0.0.0 = 对外。
+ *  3. **对外但设了访问口令** → 仍然算自己的服务器。
+ *     这一条是后加的，也很关键：自己的服务器为了能被局域网 / Tailscale 访问
+ *     **必须**绑 0.0.0.0，可是旧规则一律当成公开部署 —— 于是「不能用自己配的 Key、
+ *     右上角更新按钮直接消失、只显示『请联系服务器管理员更新』」。
+ *     现在有了访问口令这道门，绑 0.0.0.0 不再等于「谁都能进」。
+ *     没设口令时仍然按公开部署处理，免得把 Key 白送出去。
  */
 export function isPublicMode() {
   if (truthy(process.env.PUBLIC_MODE)) return true;
   if (falsy(process.env.PUBLIC_MODE)) return false;
   const host = process.env.HOST || DEFAULTS.host;
-  return !/^(127\.0\.0\.1|localhost|::1|\[::1\])$/.test(host);
+  const exposed = !/^(127\.0\.0\.1|localhost|::1|\[::1\])$/.test(host);
+  if (!exposed) return false;
+  // 对外但设了访问口令 → 还是自己的服务器
+  return !accessRequired();
 }
 
 /** 从 DSH 凭据文件读 Key —— 只在非公开模式下才允许 */

@@ -74,9 +74,14 @@ echo 请保持本窗口打开；按 Ctrl+C 可停止服务。
 echo.
 
 start "" /b powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:4173'"
-rem 绑 0.0.0.0 才能被局域网 / Tailscale 访问；
-rem 安全性由平台自己的「访问口令」负责，不要只靠 127.0.0.1 挡着。
+rem 绑 0.0.0.0 才能被局域网 / Tailscale 访问。
 if not defined HOST set "HOST=0.0.0.0"
+rem PUBLIC_MODE=0 明确声明「这是自己的服务器」：
+rem   能用服务器自己配的 API Key，右上角也能一键更新。
+rem   不设的话，平台会因为「绑了 0.0.0.0」把你当成公开部署，
+rem   结果是更新按钮消失、只剩一句「请联系服务器管理员更新」。
+rem   安全性交给平台的「访问口令」——装好后请务必设一个。
+if not defined PUBLIC_MODE set "PUBLIC_MODE=0"
 if not defined PORT set "PORT=4173"
 node server\index.mjs
 if errorlevel 1 goto :failed

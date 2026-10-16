@@ -1,9 +1,19 @@
 {
-  "version": "2.2.0",
-  "buildId": "2026-10-16-examples-password-logs-windows",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.0/courseware-platform-v2.2.0.zip",
-  "releasedAt": "2026-10-16T08:05:01.956Z",
+  "version": "2.2.1",
+  "buildId": "2026-10-16-selfhost-not-public",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.2.1/courseware-platform-v2.2.1.zip",
+  "releasedAt": "2026-10-16T08:11:01.831Z",
   "history": [
+    {
+      "version": "2.2.1",
+      "date": "2026-10-16",
+      "title": "修好「绑了 0.0.0.0 就被当成公开部署」",
+      "changes": [
+        "**修好「更新按钮消失、只剩一句请联系服务器管理员更新」**。为了让局域网 / Tailscale 能访问，自己的服务器**必须**绑 0.0.0.0；而平台把「绑 0.0.0.0」等同于「公开部署」，于是顺带把服务器自己配的 API Key 也停用了 —— 每台设备都得自己在浏览器里填 Key，右上角的更新按钮也直接不见。现在加了两条更准的判断：启动脚本会明确声明「这是自己的服务器」；而且只要**设了访问口令**，绑 0.0.0.0 就不再算公开部署（口令就是那道门）。两者都没有（对外又没设口令）时，仍然按公开部署处理，免得把 Key 白送出去。",
+        "**Windows 启动脚本加了 PUBLIC_MODE=0**，并在注释里写清楚为什么。开机自启脚本（发行包里的「开机自动启动-课件平台.cmd」）同样加上了。",
+        "如果你用的是自己写的启动方式，也可以手动设环境变量：`PUBLIC_MODE=0`，效果一样。"
+      ]
+    },
     {
       "version": "2.2.0",
       "date": "2026-10-16",
