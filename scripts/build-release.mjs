@@ -105,11 +105,26 @@ function embeddedVersionJson(buf) {
   return Buffer.from(`${JSON.stringify(d, null, 2)}\n`, 'utf8');
 }
 
+/**
+ * Service Worker 里的缓存版本号 = 当前应用版本。
+ *
+ * 不这么做的话，那个常量会一直是写死的旧值：缓存名不变 → 旧缓存永远不清理 →
+ * 用户拿到的可能是「新的 index.html + 旧的 app.js」，前端直接白屏。
+ * 发版时自动换一个，等于每次都把旧缓存作废。
+ */
+function stampedServiceWorker(buf) {
+  const text = buf
+    .toString('utf8')
+    .replace(/const VERSION = 'cw-[^']*';/, `const VERSION = 'cw-${version}';`);
+  return Buffer.from(text, 'utf8');
+}
+
 /** 加进 zip，并把可执行位写进 external attributes */
 function addToZip(zip, files, prefix) {
   for (const { rel, full } of files) {
     let buf = fs.readFileSync(full);
     if (rel === 'version.json') buf = embeddedVersionJson(buf);
+    if (rel === 'public/sw.js') buf = stampedServiceWorker(buf);
     const name = prefix ? `${prefix}/${rel}` : rel;
     // UNIX 平台 + 0755 让解出来之后还能直接双击运行
     zip.file(name, buf, {

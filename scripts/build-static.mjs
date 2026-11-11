@@ -52,6 +52,17 @@ for (const f of ['manifest.webmanifest', 'sw.js']) {
   log('PWA   ' + f);
 }
 {
+  // Service Worker 的缓存名跟着应用版本走：发版即作废旧缓存。
+  // 否则缓存名永远是旧值 → 旧缓存不清理 → 新 HTML 配旧 JS → 前端白屏。
+  const swPath = path.join(OUT, 'sw.js');
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+  const text = fs
+    .readFileSync(swPath, 'utf8')
+    .replace(/const VERSION = 'cw-[^']*';/, `const VERSION = 'cw-${manifest.version}';`);
+  fs.writeFileSync(swPath, text);
+  log('PWA   sw.js 缓存版本 → cw-' + manifest.version);
+}
+{
   const srcDir = path.join(ROOT, 'public/icons');
   ensure(path.join(OUT, 'icons'));
   const names = fs.readdirSync(srcDir);

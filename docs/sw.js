@@ -2,15 +2,24 @@
    离线缓存 / 可安装（Service Worker）
    ----------------------------------------------------------------------------
    目标：装到手机桌面之后能像 App 一样打开，断网也能进界面。
-   两条硬性注意：
+   三条硬性注意：
      1. 业务接口（/api/）和课件文件（/media/）绝不进缓存 —— 那些是私人内容，
         而且必须是实时的。
      2. version.json 也要绕开缓存，否则「检查更新」永远看到旧版本。
+     3. **静态资源必须「先网络、后缓存」**。
+        以前这里是「先缓存、后网络」：页面导航拿到的是新的 index.html，
+        而 app.js / styles.css 却是缓存里的旧版本 —— 新 HTML 配旧 JS，
+        整个前端就白屏了，而且那个旧缓存**永远不会被清掉**，因为缓存名
+        写死成 cw-2.0.0，一直不变就等于一直不清。
+
+        这套缓存是为了「断网也能进界面」，不是为了让用户看到旧代码。
+        所以在线时永远走网络（本地服务 / 局域网，本来就快），
+        只有真的连不上时才回退到缓存。
    ========================================================================== */
-const VERSION = 'cw-2.0.0';
+const VERSION = 'cw-2.3.1';
 const SHELL_CACHE = `${VERSION}-shell`;
 
-/* 首次安装时预缓存的应用外壳。逐个 add，缺哪个都不影响整体 */
+/* 离线时用来兜底的应用外壳。逐个 add，缺哪个都不影响整体 */
 const SHELL = [
   './',
   './index.html',
@@ -41,9 +50,28 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     (async () => {
+      // 清掉所有旧版本的缓存 —— 这一步是「换了新版就别再拿旧文件」的关键
       const names = await caches.keys();
-      await Promise.all(names.filter((n) => !n.startsWith(VERSION)).map((n) => caches.delete(n)));
+      await Promise.all(
+        names.filter((n) => n.startsWith('cw-') && !n.startsWith(VERSION)).map((n) => caches.delete(n)),
+      );
       await self.clients.claim();
+      /**
+       * 把已经开着的页面刷新一次。
+       *
+       * 必要性：用户可能正卡在「用旧 app.js 渲染的空白页」上 —— 那种页面自己
+       * 不会重新加载，光靠 claim() 只能管下次打开。激活时主动刷新一次，
+       * 才能让卡住的人立刻恢复。
+       * 只在 SW 更新（激活）时发生一次，不会形成刷新循环。
+       */
+      try {
+        const list = await self.clients.matchAll({ type: 'window' });
+        for (const c of list) {
+          if (c.url && c.url.startsWith(self.registration.scope)) c.navigate(c.url).catch(() => {});
+        }
+      } catch {
+        /* 老浏览器没有 navigate，忽略 */
+      }
     })(),
   );
 });
@@ -58,6 +86,12 @@ function bypass(url) {
   );
 }
 
+/** 稳的请求头，避免被中间的 HTTP 缓存回旧文件 */
+function freshInit(req) {
+  // navigate 请求不能带 cache 选项以外的东西，这里只对静态资源用
+  return { cache: 'no-cache', credentials: 'same-origin' };
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -65,21 +99,21 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return;
   if (bypass(url)) return;
 
-  // 页面导航：优先网络（这样更新能立刻拿到），断网时回退到缓存的外壳
+  // 页面导航：优先网络，断网时回退到缓存的外壳
   if (req.mode === 'navigate') {
     e.respondWith(
       (async () => {
         try {
-          const fresh = await fetch(req);
-          const cache = await caches.open(SHELL_CACHE);
-          cache.put('./index.html', fresh.clone()).catch(() => null);
-          return fresh;
+          return await fetch(req);
         } catch {
           const cache = await caches.open(SHELL_CACHE);
           return (
             (await cache.match('./index.html')) ||
             (await cache.match('./')) ||
-            new Response('离线，且没有缓存到页面', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+            new Response('离线，且没有缓存到页面', {
+              status: 503,
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            })
           );
         }
       })(),
@@ -87,18 +121,19 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // 静态资源：先用缓存立刻返回，同时后台悄悄更新（下次打开就是新的）
+  // 静态资源：**先网络**（保证 HTML 和 JS 永远同一版本），失败才用缓存
   e.respondWith(
     (async () => {
       const cache = await caches.open(SHELL_CACHE);
-      const hit = await cache.match(req);
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()).catch(() => null);
-          return res;
-        })
-        .catch(() => null);
-      return hit || (await network) || new Response('', { status: 504 });
+      try {
+        const res = await fetch(req, freshInit(req));
+        if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()).catch(() => null);
+        return res;
+      } catch {
+        const hit = await cache.match(req);
+        // 离线且没缓存过：给一个空响应而不是让页面崩在解析上
+        return hit || new Response('', { status: 504 });
+      }
     })(),
   );
 });

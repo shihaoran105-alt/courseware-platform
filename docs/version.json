@@ -1,9 +1,20 @@
 {
-  "version": "2.3.0",
-  "buildId": "2026-10-16-mindmap-export-md",
-  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.3.0/courseware-platform-v2.3.0.zip",
-  "releasedAt": "2026-10-16T09:37:25.884Z",
+  "version": "2.3.1",
+  "buildId": "2026-10-16-sw-cache-fix",
+  "packageUrl": "https://github.com/shihaoran105-alt/courseware-platform/releases/download/v2.3.1/courseware-platform-v2.3.1.zip",
+  "releasedAt": "2026-11-11T12:35:17.472Z",
   "history": [
+    {
+      "version": "2.3.1",
+      "date": "2026-11-11",
+      "title": "修好白屏：缓存把旧前端文件喂给了新页面",
+      "changes": [
+        "**修好白屏 / 一直转圈。** Service Worker 里那个缓存版本号写死成了 `cw-2.0.0`，而应用已经到 2.3.0 —— 缓存名不变，旧缓存就**永远不会被清**。更糟的是静态资源用的是「先缓存、后网络」：页面导航拿到的是最新的 index.html，而 app.js、styles.css 却是缓存里的旧版本，**新 HTML 配旧 JS** 直接白屏。现在改成「先网络、后缓存」：在线时永远用最新文件，只有真的连不上才回退到缓存 —— 装到桌面离线打开照样能用。",
+        "**缓存名跟着版本号自动走。** 打包时把 `cw-<当前版本>` 写进 sw.js，发版即作废旧缓存，不会再出现「版本涨了、缓存名没涨」这种漂移。",
+        "**换版时自动让已经打开的页面恢复。** 新的 Service Worker 激活后会清掉所有旧缓存，并把还开着的老页面刷新一次 —— 正卡在白屏的人不用自己去清缓存、重新注册。",
+        "每次打开会主动检查一次 sw.js 有没有更新，不用等到下次导航。"
+      ]
+    },
     {
       "version": "2.3.0",
       "date": "2026-10-16",

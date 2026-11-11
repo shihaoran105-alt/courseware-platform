@@ -137,10 +137,17 @@
 <script src="quiz-lab.js"></script>
 <script>
   /* 注册 Service Worker：装到桌面 + 断网也能进界面。
-     没有 SW 也不影响使用，所以失败就静默跳过。 */
+     没有 SW 也不影响使用，所以失败就静默跳过。
+     注册后主动 update() 一次：让浏览器立刻检查 sw.js 有没有变，
+     而不是等下一次导航 —— 换版时能早一点甩掉旧缓存。 */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('./sw.js').catch(function () {});
+      navigator.serviceWorker
+        .register('./sw.js')
+        .then(function (reg) {
+          if (reg && reg.update) reg.update().catch(function () {});
+        })
+        .catch(function () {});
     });
   }
 </script>
